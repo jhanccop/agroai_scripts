@@ -67,6 +67,7 @@ boolean completed = false;
 boolean status = false;
 boolean continuous = false;
 boolean saveImage = false;
+boolean runningNN = false;
 int refresh = 10;
 int pulsos = 0;
 
@@ -235,7 +236,7 @@ void callback(char *topic, byte *payload, unsigned int length) {
     }
     Serial.println("llegada de mensaje");
     Serial.println(msg_in);
-    StaticJsonDocument<50> docIn;
+    StaticJsonDocument<80> docIn;
     DeserializationError error = deserializeJson(docIn, msg_in);
     if (error) {
       return;
@@ -243,19 +244,23 @@ void callback(char *topic, byte *payload, unsigned int length) {
     int Time = docIn["timesleep"];
     boolean Status = docIn["status"];
     boolean Continuous = docIn["continuous"];
-    boolean saveImage = docIn["saveImage"];
+    boolean SaveImage = docIn["saveImage"];
+    boolean RunningNN = docIn["runningNN"];
     int Refresh = docIn["refresh"];
 
     TIME_TO_SLEEP = Time;
     status = Status;
     continuous = Continuous;
-    refresh =Refresh;
+    saveImage = SaveImage;
+    runningNN = RunningNN;
+    refresh = Refresh;
 
     writeFile(SPIFFS, "/timesleep.txt", String(Time).c_str());
     writeFile(SPIFFS, "/status.txt", String(status).c_str());
     writeFile(SPIFFS, "/continuous.txt", String(continuous).c_str());
     writeFile(SPIFFS, "/refresh.txt", String(refresh).c_str());
     writeFile(SPIFFS, "/saveImage.txt", String(saveImage).c_str());
+    writeFile(SPIFFS, "/runningNN.txt", String(runningNN).c_str());
 
     esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * 60 * uS_TO_S_FACTOR);
 
@@ -528,6 +533,7 @@ void stationSetup(){
   continuous = readFile(SPIFFS, "/continuous.txt").toInt();
   refresh = readFile(SPIFFS, "/refresh.txt").toInt();
   saveImage = readFile(SPIFFS, "/saveImage.txt").toInt();
+  runningNN = readFile(SPIFFS, "/runningNN.txt").toInt();
 
   JsonDocument doc;
 
@@ -536,8 +542,9 @@ void stationSetup(){
   doc["continuous"] = bool(continuous);
   doc["refresh"] = refresh;
   doc["saveImage"] = bool(saveImage);
+  doc["runningNN"] = bool(runningNN);
   //serializeJson(doc, Serial);
-  char output[512];
+  char output[600];
   serializeJson(doc, output);
 
   // SEND DATA BY SERIAL TO RASPBERRY

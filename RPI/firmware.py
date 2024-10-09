@@ -31,6 +31,8 @@ status = True
 continuous = True
 timesleep = 60 # 60 minutes
 refresh = 10 # seconds
+saveImage = False
+runningNN = False
 
 broker = 'broker.hivemq.com' #'broker.emqx.io'
 port = 1883
@@ -118,16 +120,28 @@ def takeVideo(name):
 def takePicture(name):
     try:
         os.system(f"libcamera-still -o {name}.jpg --width 1280 --height 720 -n -t 1")
+        #os.system(f"libcamera-still -o {name}.jpg --rotation 180 --width 1280 --height 720 -n -t 1")
         os.system(f"mv {name}.jpg imgs")
     except Exception as ex:
         print("takePicture err", type(ex))
 
-def runCNN():
+def runCNN(fig):
     try:
-        payload = {"0":3, "4":1}
-        return True, payload
+        blink(1)
+        from ultralytics import YOLO
+        fig = "test01"
+        model = YOLO('best.pt')
+        results = model([f"{fig}.jpg"])
+        nIdentified = results[0].boxes.shape[0]
+        print(nIdentified)
+        if nIdentified > 0:
+            results[0].save(filename=f"imgs/{fig}_result.jpg")
+            return nIdentified
+            
+        return 0
+
     except Exception as ex:
-        print("takePicture err", type(ex))
+        print("runCNN err", type(ex))
 
 def connect_mqtt():
     try:
@@ -185,10 +199,9 @@ def connectESP(msgOut,response):
     except Exception as ex:
         print("connectESP err", type(ex))
     
-
 def shutDown():
     try:
-        print("apagando")´+ñ
+        print("apagando")
 
         if GPIO.input(PIN):
             connectESP("sleep",False)
@@ -232,15 +245,19 @@ def subscribe(client: mqtt_client):
     except Exception as ex:
         print("subscribe err", type(ex))
 
-def publishMsg(file_name,payloadNN):
+def publishMsg(file_name,nIdentified):
 
     try:
         client = connect_mqtt()
         client.loop_start()
         #subscribe(client)
 
-        with open(f"imgs/{file_name}.jpg", "rb") as f:
-            encoded_image = base64.b64encode(f.read())
+        if nIdentified > 0:
+            with open(f"imgs/{file_name}_result.jpg", "rb") as f:
+                encoded_image = base64.b64encode(f.read())
+        else:
+            with open(f"imgs/{file_name}.jpg", "rb") as f:
+                encoded_image = base64.b64encode(f.read())
 
         # prepare data
         payloadESP32 = connectESP("data",True)
@@ -258,7 +275,7 @@ def publishMsg(file_name,payloadNN):
         payload["D"] = payloadESP32.get("D",0)
         
         payload["img"] = f"{file_name}.jpg"
-        payload["cnn"] = payloadNN
+        payload["cnn"] = nIdentified
         payload["image"] = encoded_image.decode('utf-8')
 
 
@@ -267,10 +284,10 @@ def publishMsg(file_name,payloadNN):
         # send message
         result = client.publish(topicPub, msg)
         time.sleep(1)
-        blink(4)
+        blink(3)
         client.loop_stop()
 
-        shutDown()
+        #shutDown()
 
     except Exception as ex:
         print("publishMsg err", type(ex))
@@ -283,9 +300,11 @@ def run():
 
         payloadESP32 = connectESP("settings",True)
 
-        global continuous, refresh
+        global continuous, refresh, saveImage, runningNN
         continuous = payloadESP32.get("continuous",True)
         refresh = payloadESP32.get("refresh",60)
+        saveImage = payloadESP32.get("saveImage",False)
+        runningNN = payloadESP32.get("runningNN",False)
 
         if not continuous:
 
@@ -301,16 +320,20 @@ def run():
             takePicture(file_name) # get image from camera
 
             # 6. RUN CNN
-            ojectDetect, payloadNN = runCNN()
+            nIdentified = 0
+
+            if runningNN:
+                nIdentified = runCNN(file_name)
 
             # 7 send data
-            publishMsg(file_name,payloadNN)
+            publishMsg(file_name,nIdentified)
 
             #connectESPImage("image",file_name)
             blink(4)
 
-            #publishMsg(client, file_name, payload)
-            #connectESP("completed",False)
+            if not saveImage:
+                print("Drop image")
+                os.system(f"rm imgs/{file_name}.jpg")
             shutDown() # SHUT DOWN RPI
             return 0
 
@@ -329,18 +352,22 @@ def run():
                 takePicture(file_name) # get image from camera
 
                 # 6. RUN CNN
-                ojectDetect, payload = runCNN()
+                nIdentified = runCNN()
 
-                if ojectDetect and counter == 2:
-
-                    counter = 0
-                    # 7 WAKE UP ESP32                  
-                    publishMsg(file_name, payload)
+                if nIdentified > 0:               
+                    publishMsg(file_name, nIdentified)
                     connectESP("completed",False)
                 blink(3)
                 counter += 1
                 print(refresh)
                 time.sleep(refresh)
+
+                if counter >= 50:
+                    payloadESP32 = connectESP("settings",True)
+                    continuous = payloadESP32.get("continuous",True)
+                    if continuous:
+                        break
+                counter = counter + 1
 
         # 3. READ RPI MANAGER (LOW) IS ACTIVATED (HIGH) ISN'T ACTIVATE 
         GPIO.input(PIN_RPI_MANAGER)
@@ -355,6 +382,6 @@ if __name__ == '__main__':
     time.sleep(2)
     os.system("sudo ntpdate pool.ntp.org")
     GPIO.output(PINL, GPIO.HIGH)
-    time.sleep(5)
+    time.sleep(3)
     GPIO.output(PINL, GPIO.LOW)
     run()
