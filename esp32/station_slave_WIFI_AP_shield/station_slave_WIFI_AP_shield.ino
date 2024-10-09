@@ -11,10 +11,11 @@
 #include <ESPAsyncWebServer.h>
 
 #include <ArduinoJson.h>
-//#include <Average.h>
 #include <driver/rtc_io.h>
 #include <PubSubClient.h>
 #include "SPIFFS.h"
+
+#include <esp_sleep.h>
 
 #include <DHT.h>;
 #define DHTPIN 13
@@ -50,7 +51,7 @@ PubSubClient client(espClient);
 #define pinBattery 39           // pin Battery
 #define pinPanel 34             // pin Panel
 #define pinWindDirection 35     // pin Wind direction
-#define pinWindVelocity 26      // pin Wind direction
+#define pinWindVelocity 26     // pin Wind direction
 #define pinConfigAP 23          //enter configuration Acces point mode
 #define RAINCOUNT GPIO_NUM_14   // wake up by rain counter pin 14 2^14 0x4000 
 #define ESP32MAN GPIO_NUM_33    // wake up esp32manager pin
@@ -59,13 +60,15 @@ PubSubClient client(espClient);
 uint64_t uS_TO_S_FACTOR = 1000000UL; // factor to time sleep
 uint64_t TIME_TO_SLEEP = 25; // time deep sleep - minutes
 RTC_DATA_ATTR int bootCount = 0; // count
-//#define BUTTON_PIN_BITMASK 0x200000000 // 2^33 in hex wakw up by ext0
+RTC_DATA_ATTR time_t sleep_enter_time;
 
 unsigned long previousTime = 0;
 boolean completed = false;
 boolean status = false;
 boolean continuous = false;
+boolean saveImage = false;
 int refresh = 10;
+int pulsos = 0;
 
 boolean flag = true;
 
@@ -150,14 +153,12 @@ void notFound(AsyncWebServerRequest *request) {
 void deepSleepSystem(){
 
   digitalWrite(LED, LOW);
-  // de-energize RPI
-  //rtc_gpio_set_level(RUN, HIGH);
-  //(RUN);
 
   TIME_TO_SLEEP = readFile(SPIFFS, "/timesleep.txt").toInt(); 
 
   // deep sleep start 
   Serial.print("sleep for min: ");
+  //TIME_TO_SLEEP = 1;
   Serial.println(TIME_TO_SLEEP);
   uint64_t SLEEPTIME = TIME_TO_SLEEP;
   esp_sleep_enable_timer_wakeup(SLEEPTIME * 60 * uS_TO_S_FACTOR);
@@ -165,30 +166,8 @@ void deepSleepSystem(){
   esp_deep_sleep_start();
 }
 
-// enable RPI
-void enableRPI(){
-  rtc_gpio_init(RUN);
-  rtc_gpio_set_direction(RUN, RTC_GPIO_MODE_OUTPUT_ONLY);
-  rtc_gpio_hold_dis(RUN);
-  rtc_gpio_set_level(RUN, HIGH);
-  delay(1000);
-  rtc_gpio_set_level(RUN, LOW);
-  delay(1000);
-  rtc_gpio_set_level(RUN, HIGH);
-
-}
-
-void disableRPI(){
-  rtc_gpio_init(RUN);
-  rtc_gpio_set_direction(RUN, RTC_GPIO_MODE_OUTPUT_ONLY);
-  rtc_gpio_hold_dis(RUN);
-
-  rtc_gpio_set_level(RUN, HIGH);
-  rtc_gpio_hold_en(RUN);
-}
-
-int voltage(){
-  return map(analogRead(pinBattery),1142,1271,508,582);
+int voltage(int pin){
+  return map(analogRead(pin),698,2416,199,602);
 }
 
 String readFile(fs::FS &fs, const char * path) {
@@ -237,9 +216,9 @@ String processor(const String& var) {
   } else if (var == "value") {
     double hum = dht.readHumidity();
     double temp= dht.readTemperature();
-    return String(hum,3) + " per | " + String(temp,3) + " °C";
+    return String(hum,3) + " per | " + String(temp,3) + " C";
   } else if (var == "dato") {
-    int vol = voltage();
+    int vol = voltage(pinBattery);
     return String(vol);
   }
   return String();
@@ -259,13 +238,12 @@ void callback(char *topic, byte *payload, unsigned int length) {
     StaticJsonDocument<50> docIn;
     DeserializationError error = deserializeJson(docIn, msg_in);
     if (error) {
-      //Serial.print(F("deserializeJson() failed: "));
-      //Serial.println(error.f_str());
       return;
     }
     int Time = docIn["timesleep"];
     boolean Status = docIn["status"];
     boolean Continuous = docIn["continuous"];
+    boolean saveImage = docIn["saveImage"];
     int Refresh = docIn["refresh"];
 
     TIME_TO_SLEEP = Time;
@@ -277,6 +255,7 @@ void callback(char *topic, byte *payload, unsigned int length) {
     writeFile(SPIFFS, "/status.txt", String(status).c_str());
     writeFile(SPIFFS, "/continuous.txt", String(continuous).c_str());
     writeFile(SPIFFS, "/refresh.txt", String(refresh).c_str());
+    writeFile(SPIFFS, "/saveImage.txt", String(saveImage).c_str());
 
     esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * 60 * uS_TO_S_FACTOR);
 
@@ -328,6 +307,8 @@ void setting() {
       inputMessage = "No message sent";
     }
     //Serial.println(inputMessage);
+    writeFile(SPIFFS, "/ssidRainCounter.txt", "0");
+
     request->send(200, "text/text", inputMessage);
   });
 
@@ -343,8 +324,7 @@ void setting() {
 }
 
 /* ====================== RECONNECT ======================== */
-void reconnect()
-{
+void reconnect(){
   int count = 0;
   while (!client.connected()) {
     String client_id = "esp32-client-";
@@ -367,6 +347,36 @@ void reconnect()
     }
     count++;
   }
+}
+
+/* ====================== SEND DATA ESP32 ======================== */
+void sendData(){
+
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
+
+
+  // START DHT SENSOR
+  dht.begin(); // sensor
+
+  StaticJsonDocument<200> docOut;
+  docOut["type"] = "camVid";
+  docOut["mac"] = WiFi.macAddress();                            // MacAddress();
+  docOut["T"] = String(dht.readTemperature(),2);
+  docOut["H"] = String(dht.readHumidity(),2);
+  docOut["B"] = voltage(pinBattery);                            // battery Voltage 
+  docOut["P"] = voltage(pinPanel);                                 // panel Voltage
+  docOut["R"] = readFile(SPIFFS, "/ssidRainCounter.txt").toInt();  // Rain counter
+  docOut["V"] = WindVelocity();
+  docOut["D"] = WindDirection();
+
+  String payload = "";
+  serializeJson(docOut, payload);
+  
+  Serial.println(payload);
+  client.publish(topicPublish, payload.c_str());
 }
 
 /* ====================== RUNNING ======================== */
@@ -428,14 +438,12 @@ void init_running() {
     
     Serial.println(payloadInit);
     client.publish(topicPublish, payloadInit.c_str());
-
   }
-
 }
 
 void init_running_2(){
   /* ================================================================================= */
-  int vB = voltage();
+  int vB = voltage(pinBattery);
 
   //if(status && vB >= 400){ /* RPI RUNNING */
   if(status){ /* RPI RUNNING */
@@ -447,77 +455,53 @@ void init_running_2(){
     rtc_gpio_set_level(RUN, HIGH);
     rtc_gpio_hold_en(RUN);
 
-    // MANAGER WHITE LOW TO CONINUE RUNNING
-    rtc_gpio_init(RPI_MANAGER);
-    rtc_gpio_set_direction(RPI_MANAGER, RTC_GPIO_MODE_OUTPUT_ONLY);
-    rtc_gpio_hold_dis(RPI_MANAGER);
-    rtc_gpio_set_level(RPI_MANAGER, LOW);
-    rtc_gpio_hold_en(RPI_MANAGER);
-
     Serial.println(continuous);
-
-    if(continuous){
-      // Send message, sensors ann keep alive data
-      StaticJsonDocument<200> docOut;
-      docOut["type"] = "camVid";
-      docOut["mac"] = WiFi.macAddress();//readMacAddress();
-      docOut["T"] = String(dht.readTemperature(),2);
-      docOut["H"] = String(dht.readHumidity(),2);
-      docOut["B"] = voltage();
-      docOut["S"] = !digitalRead(RPI_STATUS);
-
-      String payload = "";
-      serializeJson(docOut, payload);
-      
-      Serial.println(payload);
-      client.publish(topicPublish, payload.c_str());
-    }
-
-  }else{ /* RPI SHUTDOWN */
-
-  // Send message, sensors ann keep alive data
-    StaticJsonDocument<200> docOut;
-    docOut["type"] = "camVid";
-    docOut["mac"] = WiFi.macAddress();//readMacAddress();
-    docOut["T"] = String(dht.readTemperature(),2);
-    docOut["H"] = String(dht.readHumidity(),2);
-    docOut["B"] = voltage();
-    docOut["S"] = !digitalRead(RPI_STATUS);
-
-    String payload = "";
-    serializeJson(docOut, payload);
-    
-    Serial.println(payload);
-    client.publish(topicPublish, payload.c_str());
 
     if(continuous){
       // MANAGER WHITE LOW TO CONINUE RUNNING
       rtc_gpio_init(RPI_MANAGER);
       rtc_gpio_set_direction(RPI_MANAGER, RTC_GPIO_MODE_OUTPUT_ONLY);
       rtc_gpio_hold_dis(RPI_MANAGER);
-      rtc_gpio_set_level(RPI_MANAGER, HIGH);
+      rtc_gpio_set_level(RPI_MANAGER, LOW);
       rtc_gpio_hold_en(RPI_MANAGER);
 
-      delay(15000);
+      // Send message, sensors ann keep alive data
+      sendData();
 
-      // RUN WRITE LOW TO CONINUE RUNNING
-      rtc_gpio_init(RUN);
-      rtc_gpio_set_direction(RUN, RTC_GPIO_MODE_OUTPUT_ONLY);
-      rtc_gpio_hold_dis(RUN);
-      rtc_gpio_set_level(RUN, LOW);
-      rtc_gpio_hold_en(RUN);
+    }else{
+      // MANAGER WHITE LOW TO CONINUE RUNNING
+      rtc_gpio_init(RPI_MANAGER);
+      rtc_gpio_set_direction(RPI_MANAGER, RTC_GPIO_MODE_OUTPUT_ONLY);
+      rtc_gpio_hold_dis(RPI_MANAGER);
+      rtc_gpio_set_level(RPI_MANAGER, HIGH);
+      rtc_gpio_hold_en(RPI_MANAGER);
     }
 
+  }else{
+    
+    /* RPI SHUTDOWN */
+    rtc_gpio_init(RPI_MANAGER);
+    rtc_gpio_set_direction(RPI_MANAGER, RTC_GPIO_MODE_OUTPUT_ONLY);
+    rtc_gpio_hold_dis(RPI_MANAGER);
+    rtc_gpio_set_level(RPI_MANAGER, HIGH);
+    rtc_gpio_hold_en(RPI_MANAGER);
+    
+    // Send message, sensors ann keep alive data
+    sendData();
+    delay(15000);
+
+    // RUN WRITE LOW TO CONINUE RUNNING
+    rtc_gpio_init(RUN);
+    rtc_gpio_set_direction(RUN, RTC_GPIO_MODE_OUTPUT_ONLY);
+    rtc_gpio_hold_dis(RUN);
+    rtc_gpio_set_level(RUN, LOW);
+    rtc_gpio_hold_en(RUN);
   }
-
-  
-
   delay(1000);
-
   //rpiRequest();
-
+  Serial.println("start deep sleep RUNING 2");
+  
   esp_deep_sleep_start();
-
 }
 
 void infoWifi(){
@@ -537,32 +521,124 @@ void infoWifi(){
 }
 
 /* ========================= SEND INFO ESP32 TO RPI ========================= */
-void infoESP32(){
+void stationSetup(){
   // READ CURRENTLY SETTING
   TIME_TO_SLEEP = readFile(SPIFFS, "/timesleep.txt").toInt();
   status = readFile(SPIFFS, "/status.txt").toInt();
   continuous = readFile(SPIFFS, "/continuous.txt").toInt();
   refresh = readFile(SPIFFS, "/refresh.txt").toInt();
+  saveImage = readFile(SPIFFS, "/saveImage.txt").toInt();
 
   JsonDocument doc;
-  doc["mac"] = WiFi.macAddress(); //readMacAddress();
-  doc["T"] = String(dht.readTemperature(),2);
-  doc["H"] = String(dht.readHumidity(),2);
-  doc["B"] = voltage(); //5.08 v - 5.82 v
 
   doc["timesleep"] = TIME_TO_SLEEP;
   doc["status"] = bool(status);
   doc["continuous"] = bool(continuous);
   doc["refresh"] = refresh;
-
+  doc["saveImage"] = bool(saveImage);
   //serializeJson(doc, Serial);
-  char output[256];
+  char output[512];
   serializeJson(doc, output);
 
   // SEND DATA BY SERIAL TO RASPBERRY
   Serial2.write(output);
   Serial2.write("\n");
+  Serial.println("settings to rpi");
   Serial.println(output);
+}
+
+void dataEsp(){
+  // START DHT SENSOR
+  dht.begin(); // sensor
+
+  JsonDocument docOut;
+  docOut["mac"] = WiFi.macAddress();  
+  docOut["T"] = String(dht.readTemperature(),2);
+  docOut["H"] = String(dht.readHumidity(),2);
+  docOut["B"] = voltage(pinBattery);                            // battery Voltage 5.08 v - 5.82 v
+  docOut["P"] = voltage(pinPanel);                                 // panel Voltage
+  docOut["R"] = readFile(SPIFFS, "/ssidRainCounter.txt").toInt();  // Rain counter
+  docOut["V"] = String(WindVelocity(),2);
+  docOut["D"] = WindDirection();
+
+  String payload = "";
+  serializeJson(docOut, payload);
+
+  // SEND DATA BY SERIAL TO RASPBERRY
+  Serial2.write(payload.c_str());
+  Serial2.write("\n");
+  Serial.println("data from esp 32");
+  Serial.println(payload);
+}
+
+/* ========================= WEATHER FUNCTIONS ========================= */
+void runRainCounter(){
+  int rainCounter = 0;
+    rainCounter = readFile(SPIFFS, "/ssidRainCounter.txt").toInt();
+  rainCounter++;
+  String counter = String(rainCounter);
+  writeFile(SPIFFS, "/ssidRainCounter.txt", counter.c_str());
+  delay(200);
+
+  //digitalWrite(LED, LOW);
+
+  time_t now;
+  time(&now);
+
+  int sleep_time = difftime(now, sleep_enter_time);
+  Serial.printf("Tiempo en deep sleep: %d segundos\n", sleep_time);
+  
+
+  TIME_TO_SLEEP = readFile(SPIFFS, "/timesleep.txt").toInt(); 
+
+  /*--- deep sleep start ***/ 
+  Serial.println("sleep start RAIN COUNT");
+  Serial.println(sleep_enter_time);
+  Serial.println(now);
+  uint64_t SLEEPTIME = TIME_TO_SLEEP * 60 - sleep_time;
+  Serial.println(SLEEPTIME);
+  esp_sleep_enable_timer_wakeup(SLEEPTIME * uS_TO_S_FACTOR);
+
+  esp_deep_sleep_start();
+}
+
+int WindDirection(){
+  int dir[8] = {0,45,90,135,180,225,270,315};
+  int raw[8] = {3051, 1732, 234, 598, 1021, 2419, 3955, 3539};
+
+  int tol = 100;
+  int val = analogRead(pinWindDirection);
+  if(val > 4090){
+    return -90;
+  }
+
+  int value;
+  for(int i = 0; i < 8; i++){
+    if(abs(val - raw[i]) <= tol){
+      value = dir[i];
+      return value;
+    }
+  }
+
+  return -180;
+}
+
+float WindVelocity(){
+  pinMode(pinWindVelocity, INPUT_PULLUP);
+  float velocity = 0;
+  int counter = 0;
+  boolean lastState = digitalRead(pinWindVelocity);
+  for(int i = 0; i < 600; i++){
+    if(digitalRead(pinWindVelocity) != lastState){
+      lastState = digitalRead(pinWindVelocity);
+      counter++;
+      Serial.println(counter);
+      delay(10);
+    }
+    delay(5);
+  }
+  velocity = counter/9.00;
+  return velocity;
 }
 
 void rpiRequest(){
@@ -570,7 +646,6 @@ void rpiRequest(){
     previousTime = millis();
     if (Serial2.available())
     {
-      char char_array[256];  // assumption: it will never exceed 255 characters, based on the example output
       uint8_t length = 0;
       String msgin = "";
       while (Serial2.available() && length < 255) {
@@ -578,8 +653,7 @@ void rpiRequest(){
         msgin += (char)ch;
       }
 
-      Serial.println("msg arrived");
-      Serial.println(msgin);
+      Serial.println("msg from rpi");
 
       JsonDocument doc;
       DeserializationError error = deserializeJson(doc, msgin);
@@ -592,14 +666,15 @@ void rpiRequest(){
       }
 
       const char* msg = doc["msg"];
-      if(String(msg) == "info"){
-        infoESP32();
+      if(String(msg) == "settings"){
+        stationSetup();
         deepSleepSystem();
       }else if(String(msg) == "completed"){
-
         deepSleepSystem();
-      }
-      else if(String(msg) == "wifi"){
+      }else if(String(msg) == "data"){
+        dataEsp();
+        deepSleepSystem();
+      }else if(String(msg) == "wifi"){
         infoWifi();
       }
       else if(String(msg) == "sleep"){
@@ -609,7 +684,7 @@ void rpiRequest(){
         rtc_gpio_set_level(RUN, LOW);
         rtc_gpio_hold_en(RUN);
 
-        delay(15);
+        delay(15000);
 
         deepSleepSystem();
       }
@@ -631,6 +706,8 @@ void rpiRequest(){
 
 /* ========================= WAKE UP REASON ========================= */
 void wakeup_reason(){
+  time_t now;
+  time(&now);
   esp_sleep_wakeup_cause_t wakeup_reason;
 
   wakeup_reason = esp_sleep_get_wakeup_cause();
@@ -640,23 +717,32 @@ void wakeup_reason(){
     case ESP_SLEEP_WAKEUP_EXT0 :
       flag = false;
       Serial.println("Wakeup caused by rpi request");
-      // function for response RPI
-      rpiRequest();
+      rpiRequest();     // function for response RPI
       break;
     case ESP_SLEEP_WAKEUP_EXT1 : 
-      Serial.println("Wakeup caused by external signal using RTC_CNTL");
+      Serial.println("Wakeup caused by rain counter pin");
+      runRainCounter();  // Rain counter
+      //deepSleepSystem();
       break;
     case ESP_SLEEP_WAKEUP_TIMER :
+      sleep_enter_time = now;
       Serial.println("Wakeup caused by timer");
       init_running();
       break;
     case ESP_SLEEP_WAKEUP_TOUCHPAD :
+      
+      sleep_enter_time = now;
       Serial.println("Wakeup caused by touchpad");
       break;
     case ESP_SLEEP_WAKEUP_ULP :
+
+      sleep_enter_time = now;
       Serial.println("Wakeup caused by ULP program");
       break;
     default :
+
+      sleep_enter_time = now;
+
       Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason);
       rtc_gpio_init(RUN);
       rtc_gpio_set_direction(RUN, RTC_GPIO_MODE_OUTPUT_ONLY);
@@ -672,16 +758,18 @@ void wakeup_reason(){
 void setup() {
 
   Serial.begin(115200);
-  Serial2.begin(115200,SERIAL_8N1,16,17); // SERIAL CONNECT TO RPI
-  rtc_gpio_pulldown_en(GPIO_NUM_33);
-  esp_sleep_enable_ext0_wakeup(GPIO_NUM_33,1);
+  Serial2.begin(115200,SERIAL_8N1,16,17);   // SERIAL CONNECT TO RPI
+
+  // WAKE UP SETTINGS
+  rtc_gpio_pulldown_en(ESP32MAN);           // wake up by rpi requests
+  esp_sleep_enable_ext0_wakeup(ESP32MAN,1);
+
+  rtc_gpio_pullup_en(RAINCOUNT);          // wake up by rain counter
+  esp_sleep_enable_ext1_wakeup(0x4000,ESP_EXT1_WAKEUP_ALL_LOW); // Pin 14 to rain counter
 
   // LED RUNNING INDICATOR
   pinMode(LED, OUTPUT);
   digitalWrite(LED, HIGH);
-
-  // START DHT SENSOR
-  dht.begin(); // sensor
 
   // INIT SPIFFS MODULE
   if (!SPIFFS.begin(true)) {
@@ -709,3 +797,5 @@ void loop() {
     deepSleepSystem(); // poweroff
   }
 }
+
+
