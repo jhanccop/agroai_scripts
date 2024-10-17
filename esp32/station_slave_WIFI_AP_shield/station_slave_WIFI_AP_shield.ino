@@ -38,7 +38,8 @@ const char* PARAM_TANK_HEIGHT = "tankHeight";
 const char* PARAM_RESET = "reset";
 
 /* ====================== MQTT ======================== */
-const char *broker = "broker.hivemq.com"; // broker.emqx.io
+//const char *broker = "broker.hivemq.com"; // broker.hivemq.com
+const char *broker = "24.199.125.52";
 const int mqtt_port = 1883;
 const char *topicSubscribe = "jhpOandG/settings";
 const char *topicPublish = "jhpOandG/data";
