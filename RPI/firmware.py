@@ -1,3 +1,5 @@
+# pip install torch --no-cache-dir
+
 import os
 import time
 import random
@@ -34,7 +36,8 @@ refresh = 10 # seconds
 saveImage = False
 runningNN = False
 
-broker = 'broker.hivemq.com' #'broker.emqx.io'
+#broker = 'broker.emqx.io' #'broker.hivemq.com' broker.hivemq.com
+broker = "24.199.125.52"
 port = 1883
 
 topicPub = "jhpOandG/data"
@@ -43,8 +46,8 @@ client_id = f'publish-{random.randint(0, 1000)}'
 # username = 'emqx'
 # password = 'public'
 
-client_name = "CAMERA1"
-mac = "D4:8A:FC:A5:7A:58"
+client_name = "CAMERA4"
+mac = "30:AE:A4:CA:C5:E4"
 
 def connectWifi():
 
@@ -119,29 +122,18 @@ def takeVideo(name):
 
 def takePicture(name):
     try:
-        os.system(f"libcamera-still -o {name}.jpg --width 1280 --height 720 -n -t 1")
-        #os.system(f"libcamera-still -o {name}.jpg --rotation 180 --width 1280 --height 720 -n -t 1")
+        os.system(f"libcamera-still -o {name}.jpg --rotation 180 --width 1280 --height 720 -n -t 1")
         os.system(f"mv {name}.jpg imgs")
     except Exception as ex:
         print("takePicture err", type(ex))
 
-def runCNN(fig):
+def runCNN():
+    
     try:
-        blink(1)
-        from ultralytics import YOLO
-        fig = "test01"
-        model = YOLO('best.pt')
-        results = model([f"{fig}.jpg"])
-        nIdentified = results[0].boxes.shape[0]
-        print(nIdentified)
-        if nIdentified > 0:
-            results[0].save(filename=f"imgs/{fig}_result.jpg")
-            return nIdentified
-            
-        return 0
-
+        payload = {"0":3, "4":1}
+        return True, payload
     except Exception as ex:
-        print("runCNN err", type(ex))
+        print("takePicture err", type(ex))
 
 def connect_mqtt():
     try:
@@ -245,19 +237,15 @@ def subscribe(client: mqtt_client):
     except Exception as ex:
         print("subscribe err", type(ex))
 
-def publishMsg(file_name,nIdentified):
+def publishMsg(file_name,payloadNN):
 
     try:
         client = connect_mqtt()
         client.loop_start()
         #subscribe(client)
 
-        if nIdentified > 0:
-            with open(f"imgs/{file_name}_result.jpg", "rb") as f:
-                encoded_image = base64.b64encode(f.read())
-        else:
-            with open(f"imgs/{file_name}.jpg", "rb") as f:
-                encoded_image = base64.b64encode(f.read())
+        with open(f"imgs/{file_name}.jpg", "rb") as f:
+            encoded_image = base64.b64encode(f.read())
 
         # prepare data
         payloadESP32 = connectESP("data",True)
@@ -275,7 +263,7 @@ def publishMsg(file_name,nIdentified):
         payload["D"] = payloadESP32.get("D",0)
         
         payload["img"] = f"{file_name}.jpg"
-        payload["cnn"] = nIdentified
+        payload["cnn"] = payloadNN
         payload["image"] = encoded_image.decode('utf-8')
 
 
@@ -320,13 +308,10 @@ def run():
             takePicture(file_name) # get image from camera
 
             # 6. RUN CNN
-            nIdentified = 0
-
-            if runningNN:
-                nIdentified = runCNN(file_name)
+            #ojectDetect, payloadNN = runCNN()
 
             # 7 send data
-            publishMsg(file_name,nIdentified)
+            publishMsg(file_name,0)
 
             #connectESPImage("image",file_name)
             blink(4)
@@ -338,12 +323,28 @@ def run():
             return 0
 
         else:
+            from ultralytics import YOLO
+            model = YOLO('best.pt')
+            time.sleep(5)
+            blink(1)
+            model = YOLO('best.pt')
+            
             counter = 0
+
             while continuous:
+
+                if counter >= 50:
+                    payloadESP32 = connectESP("settings",True)
+
+                    #global continuous, refresh, runningNN
+                    continuous = payloadESP32.get("continuous",True)
+                    refresh = payloadESP32.get("refresh",60)
+                    runningNN = payloadESP32.get("runningNN",False)
+                    saveImage = payloadESP32.get("saveImage",False)
+                    counter = 0
 
                 # 5. TAKE PICTURE
                 blink(2)
-                time.sleep(2)
 
                 now = datetime.now()
                 dt_string = now.strftime("%d-%m-%Y_%H-%M-%S")
@@ -351,22 +352,19 @@ def run():
                 file_name = client_name + "_" + dt_string
                 takePicture(file_name) # get image from camera
 
-                # 6. RUN CNN
-                nIdentified = runCNN()
+                results = model([f"imgs/{file_name}.jpg"])
+                nDetected = results[0].boxes.shape[0]
 
-                if nIdentified > 0:               
-                    publishMsg(file_name, nIdentified)
+                if nDetected > 0:
+                    results[0].save(filename=f"imgs/{file_name}.jpg")
+
+                    publishMsg(file_name, nDetected)
                     connectESP("completed",False)
+
                 blink(3)
                 counter += 1
                 print(refresh)
                 time.sleep(refresh)
-
-                if counter >= 50:
-                    payloadESP32 = connectESP("settings",True)
-                    continuous = payloadESP32.get("continuous",True)
-                    if continuous:
-                        break
                 counter = counter + 1
 
         # 3. READ RPI MANAGER (LOW) IS ACTIVATED (HIGH) ISN'T ACTIVATE 
