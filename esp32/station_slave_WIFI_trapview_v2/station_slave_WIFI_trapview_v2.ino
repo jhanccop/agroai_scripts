@@ -38,8 +38,8 @@ const char* PARAM_TANK_HEIGHT = "tankHeight";
 const char* PARAM_RESET = "reset";
 
 /* ====================== MQTT ======================== */
-const char *broker = "broker.emqx.io"; // broker.hivemq.com
-//const char *broker = "24.199.125.52";
+//const char *broker = "broker.emqx.io"; // broker.hivemq.com
+const char *broker = "24.199.125.52";
 const int mqtt_port = 1883;
 const char *topicSubscribe = "jhpOandG/settings";
 const char *topicPublish = "jhpOandG/data";
@@ -69,6 +69,9 @@ boolean status = false;
 boolean continuous = false;
 boolean saveImage = false;
 boolean runningNN = false;
+
+String gateway = "";
+
 int refresh = 10;
 int pulsos = 0;
 
@@ -226,46 +229,83 @@ String processor(const String& var) {
   return String();
 }
 
+void saveSetting(String value, String fil){
+  String orValue = readFile(SPIFFS, fil.c_str());
+  if(orValue != value ){
+    writeFile(SPIFFS, fil.c_str(), value.c_str());
+  }
+}
+
 /* ====================== CALLBACK ======================== */
 void callback(char *topic, byte *payload, unsigned int length) {
-  if (String(topic) == String(topicSubscribe))
-  {
+  Serial.print("llegada de mensaje tpic ");
+  Serial.println(topic);
+  gateway = readFile(SPIFFS, "/gateway.txt");
+
+  if(String(topic) == String(topicSubscribe) + "/" + String(WiFi.macAddress())){
     String msg_in = "";
     for (int i = 0; i < length; i++)
     {
       msg_in += String((char)payload[i]);
     }
-    Serial.println("llegada de mensaje");
+    Serial.println("llegada de mensaje seccion DEVICE ");
     Serial.println(msg_in);
     StaticJsonDocument<80> docIn;
     DeserializationError error = deserializeJson(docIn, msg_in);
     if (error) {
       return;
     }
-    int Time = docIn["timesleep"];
-    boolean Status = docIn["status"];
-    boolean Continuous = docIn["continuous"];
-    boolean SaveImage = docIn["saveImage"];
-    boolean RunningNN = docIn["runningNN"];
-    int Refresh = docIn["refresh"];
 
-    TIME_TO_SLEEP = Time;
-    status = Status;
-    continuous = Continuous;
-    saveImage = SaveImage;
-    runningNN = RunningNN;
-    refresh = Refresh;
+    const char* function = docIn["function"];
 
-    writeFile(SPIFFS, "/timesleep.txt", String(Time).c_str());
-    writeFile(SPIFFS, "/status.txt", String(status).c_str());
-    writeFile(SPIFFS, "/continuous.txt", String(continuous).c_str());
-    writeFile(SPIFFS, "/refresh.txt", String(refresh).c_str());
-    writeFile(SPIFFS, "/saveImage.txt", String(saveImage).c_str());
-    writeFile(SPIFFS, "/runningNN.txt", String(runningNN).c_str());
+    if(String(function) == "setting"){
+      Serial.println("setting-------------------");
 
-    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * 60 * uS_TO_S_FACTOR);
+      boolean Status = docIn["status"];
+      int Time = docIn["timesleep"];
+      boolean A_TH = docIn["A_TH"];
+      boolean A_WS = docIn["A_WS"];
+      boolean RunningNN = docIn["runningNN"];
 
-    init_running_2();
+      const char* Gateway = docIn["gateway"];
+
+      gateway = String(Gateway);
+
+      TIME_TO_SLEEP = Time;
+      status = Status;
+
+      saveSetting(String(Gateway), "/gateway.txt");
+      saveSetting(String(status), "/status.txt");
+      saveSetting(String(Time), "/timesleep.txt");
+      //writeFile(SPIFFS, "/A_TH.txt", String(A_TH).c_str());
+      //writeFile(SPIFFS, "/A_WS.txt", String(A_WS).c_str());
+      saveSetting(String(A_TH), "/A_TH.txt");
+      saveSetting(String(A_WS), "/A_WS.txt");
+      saveSetting(String(RunningNN), "/runningNN.txt");
+
+      init_running_2();
+
+    }
+  }else if(String(topic) == String(topicSubscribe) + "/" + gateway){
+    String msg_in = "";
+    for (int i = 0; i < length; i++)
+    {
+      msg_in += String((char)payload[i]);
+    }
+    Serial.println("llegada de mensaje seccion GATEWAY ");
+    Serial.println(msg_in);
+    StaticJsonDocument<80> docIn;
+    DeserializationError error = deserializeJson(docIn, msg_in);
+    if (error) {
+      return;
+    }
+
+    const char* function = docIn["function"];
+
+    if(String(function) == "poweroff"){
+      Serial.println("poweroff-------------------");
+      deepSleepSystem();
+    }
   }
 }
 
@@ -337,10 +377,10 @@ void reconnect(){
     client_id += String(WiFi.macAddress());
     //Serial.printf("The client %s connects to the public MQTT broker\n", client_id.c_str());
     if (client.connect(client_id.c_str())) {
-      //String topiSub = String(topicSubscribe) + "/" + String(WiFi.macAddress());
-      //client.subscribe(topiSub.c_str());
-      client.subscribe(topicSubscribe);
-      Serial.println(topicSubscribe);
+      String topiSub = String(topicSubscribe) + "/#";
+      client.subscribe(topiSub.c_str());
+      //client.subscribe(topicSubscribe);
+      Serial.println(topiSub);
     } else {
       Serial.print("failed with state ");
       Serial.print(client.state());
@@ -363,19 +403,27 @@ void sendData(){
   }
   client.loop();
 
-  // START DHT SENSOR
-  dht.begin(); // sensor
-
   StaticJsonDocument<200> docOut;
-  docOut["type"] = "camVid";
+  docOut["type"] = "trapView";
   docOut["mac"] = WiFi.macAddress();                            // MacAddress();
-  docOut["T"] = String(dht.readTemperature(),2);
-  docOut["H"] = String(dht.readHumidity(),2);
   docOut["B"] = voltage(pinBattery);                            // battery Voltage 
   docOut["P"] = voltage(pinPanel);                                 // panel Voltage
-  docOut["R"] = readFile(SPIFFS, "/ssidRainCounter.txt").toInt();  // Rain counter
-  docOut["V"] = WindVelocity();
-  docOut["D"] = WindDirection();
+
+  int ATH = readFile(SPIFFS, "/A_TH.txt").toInt();
+  int AWS = readFile(SPIFFS, "/A_WS.txt").toInt();
+
+  if(ATH){
+    // START DHT SENSOR
+    dht.begin(); // sensor
+    docOut["T"] = String(dht.readTemperature(),2);
+    docOut["H"] = String(dht.readHumidity(),2);
+  }
+
+  if(AWS){
+    docOut["R"] = readFile(SPIFFS, "/ssidRainCounter.txt").toInt();  // Rain counter
+    docOut["V"] = String(WindVelocity(),2);
+    docOut["D"] = WindDirection();
+  }
 
   String payload = "";
   serializeJson(docOut, payload);
@@ -416,10 +464,10 @@ void init_running() {
       //Serial.printf("The client %s connects to the public MQTT broker\n", client_id.c_str());
       if (client.connect(client_id.c_str())) {
         Serial.println("broker connected");
-        //String topiSub = String(topicSubscribe) + "/" + String(WiFi.macAddress());
-        //client.subscribe(topiSub.c_str());
-        client.subscribe(topicSubscribe);
-        Serial.println(topicSubscribe);
+        String topiSub = String(topicSubscribe) + "/#";
+        client.subscribe(topiSub.c_str());
+        //client.subscribe(topicSubscribe);
+        Serial.println(topiSub);
       } else {
         Serial.print("failed with state ");
         Serial.print(client.state());
@@ -435,14 +483,16 @@ void init_running() {
 
     StaticJsonDocument<50> docInit;
     // {"type":"camVidSet","name" : "cam1","mac":"d4:8a:fc:a5:7a:58"}
-    docInit["type"] = "camVidSet";
+    docInit["type"] = "trapViewSetting";
+    docInit["function"] = "setting";
     docInit["mac"] = WiFi.macAddress();
 
     String payloadInit = "";
     serializeJson(docInit, payloadInit);
-    
+    Serial.print("ARRIVE SETTING ");
     Serial.println(payloadInit);
     client.publish(topicPublish, payloadInit.c_str());
+    previousTime = millis();
   }
 }
 
@@ -457,6 +507,10 @@ void init_running_2(){
     rtc_gpio_init(RUN);
     rtc_gpio_set_direction(RUN, RTC_GPIO_MODE_OUTPUT_ONLY);
     rtc_gpio_hold_dis(RUN);
+    //rtc_gpio_set_level(RUN, LOW);
+
+    //delay(1000);
+
     rtc_gpio_set_level(RUN, HIGH);
     rtc_gpio_hold_en(RUN);
 
@@ -493,7 +547,7 @@ void init_running_2(){
     
     // Send message, sensors ann keep alive data
     sendData();
-    delay(15000);
+    delay(12000);
 
     // RUN WRITE LOW TO CONINUE RUNNING
     rtc_gpio_init(RUN);
@@ -502,11 +556,11 @@ void init_running_2(){
     rtc_gpio_set_level(RUN, LOW);
     rtc_gpio_hold_en(RUN);
   }
-  delay(1000);
+  delay(500);
   //rpiRequest();
   Serial.println("start deep sleep RUNING 2");
   
-  esp_deep_sleep_start();
+  //esp_deep_sleep_start();
 }
 
 void infoWifi(){
@@ -541,6 +595,7 @@ void stationSetup(){
   doc["status"] = bool(status);
   doc["continuous"] = bool(continuous);
   doc["refresh"] = refresh;
+  doc["gateway"] = gateway;
   doc["saveImage"] = bool(saveImage);
   doc["runningNN"] = bool(runningNN);
   //serializeJson(doc, Serial);
@@ -555,19 +610,28 @@ void stationSetup(){
 }
 
 void dataEsp(){
-  // START DHT SENSOR
-  dht.begin(); // sensor
 
   JsonDocument docOut;
-  docOut["mac"] = WiFi.macAddress();  
-  docOut["T"] = String(dht.readTemperature(),2);
-  docOut["H"] = String(dht.readHumidity(),2);
+  docOut["mac"] = WiFi.macAddress();
   docOut["B"] = voltage(pinBattery);                            // battery Voltage 5.08 v - 5.82 v
   docOut["P"] = voltage(pinPanel);                                 // panel Voltage
-  docOut["R"] = readFile(SPIFFS, "/ssidRainCounter.txt").toInt();  // Rain counter
-  docOut["V"] = String(WindVelocity(),2);
-  docOut["D"] = WindDirection();
 
+  int ATH = readFile(SPIFFS, "/A_TH.txt").toInt();
+  int AWS = readFile(SPIFFS, "/A_WS.txt").toInt();
+
+  if(ATH){
+    // START DHT SENSOR
+    dht.begin(); // sensor
+    docOut["T"] = String(dht.readTemperature(),2);
+    docOut["H"] = String(dht.readHumidity(),2);
+  }
+
+  if(AWS){
+    docOut["R"] = readFile(SPIFFS, "/ssidRainCounter.txt").toInt();  // Rain counter
+    docOut["V"] = String(WindVelocity(),2);
+    docOut["D"] = WindDirection();
+  }
+  
   String payload = "";
   serializeJson(docOut, payload);
 
@@ -593,7 +657,7 @@ void dataEsp(){
   Serial.println(SLEEPTIME);
   esp_sleep_enable_timer_wakeup(SLEEPTIME * uS_TO_S_FACTOR);
 
-  esp_deep_sleep_start();
+ // esp_deep_sleep_start();
 
 
 }
@@ -699,7 +763,7 @@ void rpiRequest(){
         deepSleepSystem();
       }else if(String(msg) == "data"){
         dataEsp();
-        //deepSleepSystem();
+        deepSleepSystem();
       }else if(String(msg) == "wifi"){
         infoWifi();
         deepSleepSystem();
@@ -711,23 +775,49 @@ void rpiRequest(){
         rtc_gpio_set_level(RUN, LOW);
         rtc_gpio_hold_en(RUN);
 
-        delay(15000);
+        Serial.println("start wait for poweroff");
 
-        deepSleepSystem();
+        runssid = readFile(SPIFFS, "/ssidString.txt");     // original ssid
+        runpassword = readFile(SPIFFS, "/passString.txt");  // original password
+
+        WiFi.begin(runssid, runpassword);
+        while (WiFi.status() != WL_CONNECTED) {
+          delay(2000);
+          Serial.println("Connecting to WiFi..");
+        }
+        
+        client.setServer(broker, mqtt_port);
+        client.setCallback(callback);
+
+        flag = true;
+
+        int count = 0;
+        while (!client.connected()) {
+          String client_id = "esp32-client-";
+          client_id += String(WiFi.macAddress());
+          //Serial.printf("The client %s connects to the public MQTT broker\n", client_id.c_str());
+          if (client.connect(client_id.c_str())) {
+            Serial.println("broker connected");
+            String topiSub = String(topicSubscribe) + "/#";
+            client.subscribe(topiSub.c_str());
+            //client.subscribe(topicSubscribe);
+            Serial.println(topiSub);
+          } else {
+            Serial.print("failed with state ");
+            Serial.print(client.state());
+            if (count == 5)
+            {
+              //Serial.println("reset mqtt");
+              ESP.restart();
+            }
+            delay(5000);
+          }
+          count++;
+        }
+
+      break;
       }
     }
-
-    // Deep sleep start before 10 seconds
-    if((millis() - previousTime) > 10000){
-      Serial.println(millis() - previousTime);
-      Serial.println("sleep for overtime");
-      deepSleepSystem(); // poweroff
-    }
-  }
-  if((millis() - previousTime) > 10000){
-    Serial.println(millis() - previousTime);
-    Serial.println("sleep for overtime");
-    deepSleepSystem(); // poweroff
   }
 }
 
@@ -750,7 +840,7 @@ void wakeup_reason(){
     case ESP_SLEEP_WAKEUP_EXT1 : 
       Serial.println("Wakeup caused by rain counter pin");
       runRainCounter();  // Rain counter
-      //deepSleepSystem();
+      deepSleepSystem();
       break;
     case ESP_SLEEP_WAKEUP_TIMER :
       sleep_enter_time = now;
@@ -816,10 +906,10 @@ void loop() {
     }
     client.loop();
     
-    delay(200);
+    delay(100);
   }
 
-  if((millis() - previousTime) > 30000){
+  if((millis() - previousTime) > 40000){
     Serial.println(millis() - previousTime);
     Serial.println("sleep for overtime");
     deepSleepSystem(); // poweroff

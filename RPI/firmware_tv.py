@@ -36,7 +36,8 @@ refresh = 10 # seconds
 saveImage = False
 runningNN = False
 
-#broker = 'broker.emqx.io' #'broker.hivemq.com' broker.hivemq.com
+#broker = "broker.emqx.io" #
+#broker = 'broker.hivemq.com' #broker.hivemq.com
 broker = "24.199.125.52"
 port = 1883
 
@@ -46,8 +47,8 @@ client_id = f'publish-{random.randint(0, 1000)}'
 # username = 'emqx'
 # password = 'public'
 
-client_name = "CAMERA4"
-mac = "30:AE:A4:CA:C5:E4"
+client_name = "trapView5"
+mac = "30:AE:A4:CA:D2:04"
 
 def connectWifi():
 
@@ -251,7 +252,7 @@ def publishMsg(file_name,payloadNN):
         payloadESP32 = connectESP("data",True)
 
         payload = {}
-        payload["type"] = "camVid"
+        payload["type"] = "trapView"
         payload["mac"] = payloadESP32.get("mac",0)
         payload["name"] = client_name
         payload["T"] = payloadESP32.get("T",0)
@@ -262,7 +263,6 @@ def publishMsg(file_name,payloadNN):
         payload["V"] = payloadESP32.get("V",0)
         payload["D"] = payloadESP32.get("D",0)
         
-        payload["img"] = f"{file_name}.jpg"
         payload["cnn"] = payloadNN
         payload["image"] = encoded_image.decode('utf-8')
 
@@ -291,15 +291,16 @@ def run():
         global continuous, refresh, saveImage, runningNN
         continuous = payloadESP32.get("continuous",True)
         refresh = payloadESP32.get("refresh",60)
+        gateway = payloadESP32.get("gateway","")
         saveImage = payloadESP32.get("saveImage",False)
         runningNN = payloadESP32.get("runningNN",False)
 
         if not continuous:
 
-            print("NO CONTINUE***")
+            print("NO CONTINUE***---->")
             # 5. TAKE PICTURE
             blink(1)
-            time.sleep(2)
+            #time.sleep(2)
 
             now = datetime.now()
             dt_string = now.strftime("%d-%m-%Y_%H-%M-%S")
@@ -376,6 +377,7 @@ if __name__ == '__main__':
     time.sleep(2)
     os.system("sudo ntpdate pool.ntp.org")
     GPIO.output(PINL, GPIO.HIGH)
-    time.sleep(3)
+    time.sleep(2)
     GPIO.output(PINL, GPIO.LOW)
     run()
+
