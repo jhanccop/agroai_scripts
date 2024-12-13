@@ -136,7 +136,7 @@ void notFound(AsyncWebServerRequest *request) {
 /* ========================= FUNCTIONS ========================= */
 void deepSleepSystem(){
   poweroffdevices();
-  delay(1000);
+  delay(500);
   digitalWrite(LED, LOW);
 
   rtc_gpio_init(MODEM_POWER);
@@ -418,7 +418,7 @@ void init_running() {
     rtc_gpio_hold_dis(MODEM_MANAGER);
     rtc_gpio_set_level(MODEM_MANAGER, LOW);
 
-    delay(3000);
+    delay(3500);
 
     rtc_gpio_set_level(MODEM_MANAGER, HIGH);
     rtc_gpio_hold_en(MODEM_MANAGER);
