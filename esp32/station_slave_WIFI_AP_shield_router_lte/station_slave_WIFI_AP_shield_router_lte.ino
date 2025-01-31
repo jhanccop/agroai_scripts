@@ -434,16 +434,23 @@ void init_running() {
     Serial.println(runssid);
     Serial.println(runpassword);
 
+    int count = 0;
+
     WiFi.begin(runssid, runpassword);
     while (WiFi.status() != WL_CONNECTED) {
       delay(2000);
       Serial.println("Connecting to WiFi...");
+      if (count == 5)
+        {
+          //Serial.println("reset mqtt");
+          ESP.restart();
+        }
     }
     
     client.setServer(broker, mqtt_port);
     client.setCallback(callback);
 
-    int count = 0;
+    count = 0;
 
     while (!client.connected()) {
       String client_id = "esp32-client-";

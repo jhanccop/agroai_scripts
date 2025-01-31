@@ -489,7 +489,7 @@ void init_running() {
 
     String payloadInit = "";
     serializeJson(docInit, payloadInit);
-    Serial.print("ARRIVE SETTING ");
+    Serial.print("SEND CODE FOR SETTING ");
     Serial.println(payloadInit);
     client.publish(topicPublish, payloadInit.c_str());
     previousTime = millis();
