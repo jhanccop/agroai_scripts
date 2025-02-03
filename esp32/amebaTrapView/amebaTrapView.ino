@@ -49,7 +49,7 @@ int status = WL_IDLE_STATUS;
 int encodedLen;
 char *encodedData;
 
-VideoSetting config(VIDEO_HD, CAM_FPS, VIDEO_JPEG, 1);
+VideoSetting config(VIDEO_FHD, CAM_FPS, VIDEO_JPEG, 1);
 
 WiFiClient wifiClient;
 
@@ -63,6 +63,8 @@ boolean A_TH = false;
 uint32_t SleepTime = 60;
 boolean runningNN = false;
 boolean statusDevice = false;
+String resolution = "VIDEO_HD";
+
 String csrfToken = "";
 
 #define pinBattery A0
@@ -141,6 +143,7 @@ void getHttp() {
         boolean RunningNN = docIn["runningNN"];
         boolean Status = docIn["status"];
         int sleepTime = docIn["SleepTime"];
+        const char* Resolution = docIn["Resolution"];
 
         DeviceName = String(deviceName);
         DeviceMacAddress = String(deviceMacAddress);
@@ -148,6 +151,7 @@ void getHttp() {
         SleepTime = sleepTime;
         runningNN = RunningNN;
         statusDevice = Status;
+        resolution = String(Resolution);
 
         Serial.println(DeviceName);
         Serial.println(DeviceMacAddress);
@@ -155,6 +159,7 @@ void getHttp() {
         Serial.println(SleepTime);
         Serial.println(runningNN);
         Serial.println(statusDevice);
+        Serial.println(resolution);
 
       } else {
         Serial.print("Failed to skip response headers: ");
@@ -256,15 +261,11 @@ String vBat(){
 
 /* =========================== POST DATA =============================*/
 void postHttp() {
-  Camera.configVideoChannel(CHANNEL, config);
-  Camera.videoInit();
-  Camera.channelBegin(CHANNEL);
+  
   pinMode(LED_G, OUTPUT);
+  digitalWrite(LED_G, HIGH);
 
   dht.begin();
-
-  delay(2000);
-
   JsonDocument docOut;
 
   docOut["img64"] = "";
@@ -272,7 +273,20 @@ void postHttp() {
   if (statusDevice == 1) {
 
     Serial.println("ADQUIRE IMAGE");
-    digitalWrite(LED_G, HIGH);
+    //VideoSetting config(VIDEO_HD, CAM_FPS, VIDEO_JPEG, 1);
+
+    if(resolution = "1"){
+      Serial.println("VIDEO FHD IMAGE");
+      VideoSetting config(VIDEO_FHD, CAM_FPS, VIDEO_JPEG, 1);
+    }else{
+      Serial.println("VIDEO HD IMAGE");
+    }
+
+    Camera.configVideoChannel(CHANNEL, config);
+    Camera.videoInit();
+    Camera.channelBegin(CHANNEL);
+
+    delay(2000);
 
     Camera.getImage(CHANNEL, &img_addr, &img_len);
     encodejpg();
@@ -283,12 +297,18 @@ void postHttp() {
   float h = dht.readHumidity();
   float t = dht.readTemperature();
 
-  while (isnan(t) || isnan(h)) 
+  int cont = 0;
+
+  while (isnan(t) || isnan(h) || (h == 1.00 && t == 1.00)) 
   {
     Serial.println("Failed to read from DHT");
     h = dht.readHumidity();
     t = dht.readTemperature();
     delay(500);
+    if(cont >= 5){
+      break;
+    }
+    cont++;
   }
  
   docOut["DeviceMacAddress"] = macAddr();
@@ -332,20 +352,6 @@ void postHttp() {
     request += jsonString;
     wifiClient.println(request);
 
-    unsigned long timeout = millis();
-    while (wifiClient.available() == 0) {
-      if (millis() - timeout > 5000) {
-        Serial.println("Timeout en la respuesta!");
-        wifiClient.stop();
-        return;
-      }
-    }
-
-    // Leer respuesta
-    while (wifiClient.available()) {
-      String line = wifiClient.readStringUntil('\r');
-      Serial.println(line);
-    }
   }
 
   digitalWrite(LED_G, LOW);
@@ -372,7 +378,7 @@ void printWifiStatus() {
 
 /* =========================== WIFI STATUS =============================*/
 void readConfigFromSD(){
-  char buf[250];
+  char buf[200];
   char path[128];
 
   fs.begin();
@@ -402,6 +408,7 @@ void readConfigFromSD(){
     sHostname.toCharArray(sHostname_buffer, sizeof(sHostname_buffer));
     port = PORT;
   }
+
 
   Serial.println("read from sd --------------------------");
   Serial.println(buf);
@@ -439,7 +446,15 @@ void setup() {
 
   Serial.println("Connected to wifi");
   printWifiStatus();
+
   getHttp();
+
+  getcsrfHttp();
+
+  Serial.println("start post------>");
+  postHttp();
+
+  delay(500);
 
   uint32_t ALARM_DAY = 0;
   uint32_t ALARM_HOUR = 0;
@@ -466,13 +481,6 @@ void setup() {
       ALARM_MIN = 60;
       break;
   }
-
-  getcsrfHttp();
-
-  Serial.println("start post------>");
-  postHttp();
-
-  delay(500);
 
   uint32_t PM_rtc_Alarm[4] = {ALARM_DAY, ALARM_HOUR, ALARM_MIN, ALARM_SEC};
   #define WAKUPE_SETTING (uint32_t)(PM_rtc_Alarm)
