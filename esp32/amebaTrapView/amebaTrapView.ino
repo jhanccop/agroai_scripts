@@ -306,6 +306,7 @@ void postHttp() {
     t = dht.readTemperature();
     delay(500);
     if(cont >= 5){
+      sys_reset();
       break;
     }
     cont++;
