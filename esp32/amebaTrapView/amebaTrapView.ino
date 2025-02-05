@@ -1,4 +1,4 @@
-
+/*AMEBA PRODUCTION*/
 #define ARDUINOJSON_STRING_LENGTH_SIZE 4
 
 #include "PowerMode.h"
@@ -263,9 +263,9 @@ String vBat(){
 void postHttp() {
   
   pinMode(LED_G, OUTPUT);
+  pinMode(LED_B, OUTPUT);
   digitalWrite(LED_G, HIGH);
 
-  dht.begin();
   JsonDocument docOut;
 
   docOut["img64"] = "";
@@ -294,27 +294,38 @@ void postHttp() {
     docOut["img64"] = encodedData;
   }
 
-  float h = dht.readHumidity();
-  float t = dht.readTemperature();
-
-  int cont = 0;
-
-  while (isnan(t) || isnan(h) || (h == 1.00 && t == 1.00)) 
-  {
-    Serial.println("Failed to read from DHT");
-    h = dht.readHumidity();
-    t = dht.readTemperature();
-    delay(500);
-    if(cont >= 5){
-      sys_reset();
-      break;
+  if(A_TH){
+    dht.begin();
+    float h = dht.readHumidity();
+    float t = dht.readTemperature();
+    Serial.println("ttttttttttttttttttt");
+    Serial.println(h);
+    Serial.println(t);
+    
+    int cont = 0;
+    while (isnan(t) || isnan(h) || (h == 1.00 && t == 1.00)) 
+    {
+      digitalWrite(LED_B, HIGH);
+      dht.begin();
+      Serial.println("Failed to read from DHT");
+      h = dht.readHumidity();
+      t = dht.readTemperature();
+      
+      
+      if(cont >= 10){
+        break;
+      }
+      cont++;
+      digitalWrite(LED_B, LOW);
+      delay(2000);
     }
-    cont++;
+
+    docOut["Humidity"] = String(h,2);
+    docOut["Temperature"] = String(t,2);
+    digitalWrite(LED_B, LOW);
   }
- 
+
   docOut["DeviceMacAddress"] = macAddr();
-  docOut["Humidity"] = String(h,2);
-  docOut["Temperature"] = String(t,2);
   docOut["VoltageBattery"] = vBat();
 
   String jsonString;
@@ -339,9 +350,9 @@ void postHttp() {
   }
   */
 
+  wifiClient.setTimeout(40000);
   if (wifiClient.connect(sHostname_buffer, port)) {
-    wifiClient.setTimeout(30000);
-
+    
     String request = "POST /data/api/post HTTP/1.1\r\n";
     request += "Host: " + String(sHostname_buffer) + " \r\n";
     request += "Content-Type: application/json\r\n";
@@ -356,7 +367,7 @@ void postHttp() {
   }
 
   digitalWrite(LED_G, LOW);
-  wifiClient.stop();
+  //
 }
 
 /* =========================== WIFI STATUS =============================*/
@@ -421,7 +432,7 @@ void readConfigFromSD(){
 
 void setup() {
   Serial.begin(115200);
-
+  dht.begin();
   readConfigFromSD();
 
   int n = 0;
@@ -456,6 +467,8 @@ void setup() {
   postHttp();
 
   delay(500);
+
+  //wifiClient.stop();
 
   uint32_t ALARM_DAY = 0;
   uint32_t ALARM_HOUR = 0;
