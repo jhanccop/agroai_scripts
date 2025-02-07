@@ -13,50 +13,59 @@
 #include "DHT.h"
 #include "AmebaFatFS.h"
 
-#define CHANNEL       0
-
+/* ======== DEEP SLEEP SETTINGS ======== */
 /* DEEP SLEEP MODE WAKE UP SETTINGS */
 // wake up by AON timer :   0
 // wake up by AON GPIO  :   1
 // wake up by RTC       :   2
 #define WAKEUP_SOURCE 2
 
-/* CONNECT SETTINGS */
-char ssid[] = "ConectaLineal2500";  // your network SSID (name)
-char pass[] = "19CERA@DER27@14";    // your network password (use for WPA, or use as key for WEP)
-
+/* ======== WIFI SETTINGS ======== */
 String RUNssid = "";
 String RUNpass = "";
-
-int keyIndex = 0;                   // your network key Index number (needed only for WEP)
-int port = 8000;
-
-char filename[] = "config.txt";
-
-AmebaFatFS fs;
-
-const char kHostname[] = "192.168.3.31";  //192.168.3.31:8000/devices/api/items/1/ 24.199.125.52
+int status = WL_IDLE_STATUS;
 
 char sHostname_buffer[50];
 String sHostname = "";
-
 String SearchPath = "/devices/api/buscar/?mac=";
 String csrfPath = "/get-csrf/";
 const int kNetworkTimeout = 30 * 1000;
 const int kNetworkDelay = 1000;
-int status = WL_IDLE_STATUS;
 
+WiFiClient wifiClient;
+
+int port = 8000;
+String csrfToken = "";
+
+/* ======== MQTT SETTINGS ======== */
+#include <PubSubClient.h>
+char mqttServer[] = "24.199.125.52"; //24.199.125.52  broker.hivemq.com
+char clientId[] = "amb822";
+char imageTopic[] = "jhpOandG/data/trapViewImage";
+char publishPayload[] = "hello world";
+char subscribeTopic[] = "inTopic";
+#define MQTT_MAX_PACKET_SIZE 64000
+
+PubSubClient client(wifiClient);
+const int chunkSize = 16384;
+
+/* ======== SDCARD SETTINGS ======== */
+char filename[] = "config.txt";
+AmebaFatFS fs;
+
+/* ======== CAMERA SETTINGS ======== */
+
+#define CHANNEL       0
 int encodedLen;
 char *encodedData;
 
 VideoSetting config(VIDEO_FHD, CAM_FPS, VIDEO_JPEG, 1);
-
-WiFiClient wifiClient;
+//VideoSetting config(360,360, CAM_FPS, VIDEO_JPEG, 1);
 
 uint32_t img_addr = 0;
 uint32_t img_len = 0;
 
-/* device settings */
+/* ======== DEVICE SETTINGS ======== */
 String DeviceName = "";
 String DeviceMacAddress = "";
 boolean A_TH = false;
@@ -65,12 +74,41 @@ boolean runningNN = false;
 boolean statusDevice = false;
 String resolution = "VIDEO_HD";
 
-String csrfToken = "";
-
 #define pinBattery A0
 #define DHTPIN 8
 #define DHTTYPE DHT21
 DHT dht(DHTPIN, DHTTYPE);
+
+void callback(char* topic, byte* payload, unsigned int length)
+{
+    Serial.print("Message arrived [");
+    Serial.print(topic);
+    Serial.print("] ");
+    for (unsigned int i = 0; i < length; i++) {
+        Serial.print((char)(payload[i]));
+    }
+    Serial.println();
+}
+
+void reconnect()
+{
+    // Loop until we're reconnected
+    while (!(client.connected())) {
+        Serial.print("\r\nAttempting MQTT connection...");
+        // Attempt to connect
+        if (client.connect(clientId)) {
+            Serial.println("connected");
+            // Once connected, publish an announcement and resubscribe
+            client.subscribe(subscribeTopic);
+        } else {
+            Serial.println("failed, rc=");
+            Serial.print(client.state());
+            Serial.println(" try again in 5 seconds");
+            // Wait 5 seconds before retrying
+            delay(5000);
+        }
+    }
+}
 
 String macAddr(){
   byte mac[6];
@@ -260,7 +298,7 @@ String vBat(){
 }
 
 /* =========================== POST DATA =============================*/
-void postHttp() {
+void sendImage() {
   
   pinMode(LED_G, OUTPUT);
   pinMode(LED_B, OUTPUT);
@@ -280,13 +318,14 @@ void postHttp() {
       VideoSetting config(VIDEO_FHD, CAM_FPS, VIDEO_JPEG, 1);
     }else{
       Serial.println("VIDEO HD IMAGE");
+      VideoSetting config(VIDEO_FHD, CAM_FPS, VIDEO_JPEG, 1);
     }
 
     Camera.configVideoChannel(CHANNEL, config);
     Camera.videoInit();
     Camera.channelBegin(CHANNEL);
 
-    delay(2000);
+    delay(2500);
 
     Camera.getImage(CHANNEL, &img_addr, &img_len);
     encodejpg();
@@ -296,9 +335,10 @@ void postHttp() {
 
   if(A_TH){
     dht.begin();
+    delay(2000);
     float h = dht.readHumidity();
     float t = dht.readTemperature();
-    Serial.println("ttttttttttttttttttt");
+    Serial.println("get Temperature an humity");
     Serial.println(h);
     Serial.println(t);
     
@@ -349,21 +389,30 @@ void postHttp() {
   }
   */
 
-  String request = "POST /data/api/post HTTP/1.1\r\n";
-  request += "Host: " + String(sHostname_buffer) + "\r\n";
-  request += "Content-Type: application/json\r\n";
-  request += "X-CSRFToken: " + csrfToken +  "\r\n";
-  request += "Cookie: csrftoken=" + csrfToken + "\r\n";
-  request += "Content-Length: " + String(jsonString.length()) + "\r\n";
-  request += "Connection: keep-alive\r\n";
-  request += "\r\n";
-  request += jsonString;
-  wifiClient.setTimeout(30000);
-  if (wifiClient.connect(sHostname_buffer, port)) {
-    
-    wifiClient.print(request);
+  Serial.println("-------------------");
+
+  int sizeString = jsonString.length();
+  int Nparts = (sizeString / chunkSize) + (sizeString % chunkSize != 0);
+
+  Serial.println(String(sizeString));
+  Serial.println(String(Nparts));
+
+  for (int i = 0; i < Nparts; i++) {
+    char fragmento[chunkSize + 1];
+    strncpy(fragmento, jsonString.c_str() + (i * chunkSize), chunkSize);
+    fragmento[chunkSize] = '\0';  // Asegurar terminación
+
+    char topicFragmentado[50];
+    sprintf(topicFragmentado, "%s/%s/%d/%d",imageTopic,macAddr().c_str(),Nparts,i);
+
+    client.publish(topicFragmentado, fragmento);
+    delay(100);  // Pequeña pausa entre envíos
   }
+
+  //client.publish(publishTopic, jsonString.c_str());
+
   digitalWrite(LED_G, LOW);
+
   
 }
 
@@ -445,9 +494,10 @@ void setup() {
     RUNpass.toCharArray(pass_buffer, sizeof(pass_buffer));
 
     status = WiFi.begin(ssid_buffer, pass_buffer);
-    delay(5000);
+    delay(2000);
 
     if(n >= 5){
+      Serial.println("*********************RESTART**************");
       sys_reset();
     }
     n++;
@@ -458,12 +508,22 @@ void setup() {
 
   getHttp();
 
-  getcsrfHttp();
+  wifiClient.setNonBlockingMode();
 
-  Serial.println("start post------>");
-  postHttp();
+  client.setServer(mqttServer, 1883);
+  client.setCallback(callback);
 
-  delay(500);
+  if (!(client.connected())) {
+    reconnect();
+  }
+  client.loop();
+
+  //getcsrfHttp();
+
+  Serial.println("start send image ------>");
+  sendImage();
+
+  delay(1500);
 
   wifiClient.stop();
 

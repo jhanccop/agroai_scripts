@@ -1,0 +1,1 @@
+{"ssid":"MIFI_8D3D","pass":"1234567890","serverlocal":"192.168.3.31","server":"24.199.125.52","servermode":"1","portlocal":8000,"port":80}
