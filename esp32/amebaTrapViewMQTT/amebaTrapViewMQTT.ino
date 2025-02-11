@@ -44,7 +44,7 @@ char clientId[] = "amb822";
 char imageTopic[] = "jhpOandG/data/trapViewImage";
 char publishPayload[] = "hello world";
 char subscribeTopic[] = "inTopic";
-#define MQTT_MAX_PACKET_SIZE 64000
+//#define MQTT_MAX_PACKET_SIZE 50000
 
 PubSubClient client(wifiClient);
 const int chunkSize = 16384;
@@ -370,24 +370,6 @@ void sendImage() {
   String jsonString;
   serializeJson(docOut, jsonString);
 
-  /*
-  if (wifiClient.connect(sHostname_buffer, port)) {
-    wifiClient.setTimeout(20000);
-    wifiClient.println("POST /data/api/post HTTP/1.1");
-    wifiClient.println("Host: " + String(sHostname_buffer));
-    wifiClient.println("Content-Type: application/json");                  // Use appropriate content type
-
-    wifiClient.println("X-CSRFToken: " + csrfToken);
-    wifiClient.println("Cookie: csrftoken=" + csrfToken);                    
-    wifiClient.println("Content-Length: " + String(jsonString.length()));  // Specify the length of the content
-
-    wifiClient.println("Connection: keep-alive");
-    //wifiClient.print("Connection: close");
-    wifiClient.println();          // Empty line indicates the end of headers
-    wifiClient.print(jsonString);  // Send the Base64 encoded audio data directly
-    Serial.println("Binary sent");
-  }
-  */
 
   Serial.println("-------------------");
 

@@ -102,7 +102,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       <td>  &emsp; &emsp;</td>
 
       <td>
-      <h4 style="color:DodgerBlue;">%value% </h4> 
+      <h4 style="color:DodgerBlue;"> %value% </h4> 
       </td>
 
       <td> / </td>
