@@ -40,14 +40,14 @@ String csrfToken = "";
 /* ======== MQTT SETTINGS ======== */
 #include <PubSubClient.h>
 char mqttServer[] = "24.199.125.52"; //24.199.125.52  broker.hivemq.com
-char clientId[] = "amb822";
+String clientId = "amb";
 char imageTopic[] = "jhpOandG/data/trapViewImage";
 char publishPayload[] = "hello world";
 char subscribeTopic[] = "inTopic";
 //#define MQTT_MAX_PACKET_SIZE 50000
 
 PubSubClient client(wifiClient);
-const int chunkSize = 16384;
+const int chunkSize = 8192;
 
 /* ======== SDCARD SETTINGS ======== */
 char filename[] = "config.txt";
@@ -59,8 +59,8 @@ AmebaFatFS fs;
 int encodedLen;
 char *encodedData;
 
+CameraSetting configCam;
 VideoSetting config(VIDEO_FHD, CAM_FPS, VIDEO_JPEG, 1);
-//VideoSetting config(360,360, CAM_FPS, VIDEO_JPEG, 1);
 
 uint32_t img_addr = 0;
 uint32_t img_len = 0;
@@ -96,10 +96,11 @@ void reconnect()
     while (!(client.connected())) {
         Serial.print("\r\nAttempting MQTT connection...");
         // Attempt to connect
-        if (client.connect(clientId)) {
+        clientId += macAddr();
+        if (client.connect(clientId.c_str())) {
             Serial.println("connected");
             // Once connected, publish an announcement and resubscribe
-            client.subscribe(subscribeTopic);
+            //client.subscribe(subscribeTopic);
         } else {
             Serial.println("failed, rc=");
             Serial.print(client.state());
@@ -121,7 +122,9 @@ String macAddr(){
 
 /* =========================== GET SETTINGS =============================*/
 void getHttp() {
-  int err = 0;
+  int err0 = 0;
+  int err1 = 0;
+  int err2 = 0;
 
   WiFiClient c;
   HttpClient http(c);
@@ -133,20 +136,21 @@ void getHttp() {
   Serial.println(SearchPath);
   Serial.println(port);
 
-  err = http.get(sHostname_buffer, port, SearchPath.c_str());
-  if (err == 0) {
+  err0 = http.get(sHostname_buffer, port, SearchPath.c_str());
+
+  if (err0 == 0) {
     Serial.println("startedRequest ok");
 
-    err = http.responseStatusCode();
-    if (err >= 0) {
+    err1 = http.responseStatusCode();
+    if (err1 >= 0) {
       Serial.print("Got status code: ");
-      Serial.println(err);
+      Serial.println(err1);
 
-      err = http.skipResponseHeaders();
+      err2 = http.skipResponseHeaders();
       Serial.print("err updated");
-      Serial.println(err);
+      Serial.println(err2);
 
-      if (err >= 0) {
+      if (err2 >= 0) {
         int bodyLen = http.contentLength();
         Serial.print("Content length is: ");
         Serial.println(bodyLen);
@@ -201,83 +205,24 @@ void getHttp() {
 
       } else {
         Serial.print("Failed to skip response headers: ");
-        Serial.println(err);
+        Serial.println(err2);
       }
     } else {
       Serial.print("Getting response failed: ");
-      Serial.println(err);
+      Serial.println(err1);
     }
   } else {
     Serial.print("Connect failed: ");
-    Serial.println(err);
+    Serial.println(err0);
   }
-  http.stop();
-  
-}
 
-void getcsrfHttp() {
-  int err = 0;
-
-  WiFiClient c;
-  HttpClient http(c);
-
-  err = http.get(sHostname_buffer, port, csrfPath.c_str());
-  if (err == 0) {
-    Serial.println("startedRequest ok");
-
-    err = http.responseStatusCode();
-    if (err >= 0) {
-      Serial.print("Got status code: ");
-      Serial.println(err);
-
-      err = http.skipResponseHeaders();
-      Serial.print("err updated");
-      Serial.println(err);
-
-      if (err >= 0) {
-        int bodyLen = http.contentLength();
-        Serial.print("Content length is: ");
-        Serial.println(bodyLen);
-        Serial.println();
-        Serial.println("Body returned follows:");
-
-        unsigned long timeoutStart = millis();
-        char c;
-
-        String msg_in = "";
-        while ((http.connected() || http.available()) && ((millis() - timeoutStart) < kNetworkTimeout)) {
-          if (http.available()) {
-            c = http.read();
-            msg_in += String(c);
-            bodyLen--;
-            timeoutStart = millis();
-          } else {
-            delay(kNetworkDelay);
-          }
-        }
-
-        Serial.println(msg_in);
-
-        JsonDocument docIn;
-        DeserializationError error = deserializeJson(docIn, msg_in);
-        if (error) {
-          return;
-        }
-        const char* CsrfToken = docIn["csrfToken"];
-        csrfToken = String(CsrfToken);
-
-      } else {
-        Serial.print("Failed to skip response headers: ");
-        Serial.println(err);
-      }
-    } else {
-      Serial.print("Getting response failed: ");
-      Serial.println(err);
-    }
-  } else {
-    Serial.print("Connect failed: ");
-    Serial.println(err);
+  if(err0 != 0 || err1 < 0 || err2 < 0 ){
+    Serial.println("********************* fail http RESTART**************");
+    sys_reset();
   }
+
+
+
   http.stop();
   
 }
@@ -298,7 +243,7 @@ String vBat(){
 }
 
 /* =========================== POST DATA =============================*/
-void sendImage() {
+void sendData() {
   
   pinMode(LED_G, OUTPUT);
   pinMode(LED_B, OUTPUT);
@@ -311,15 +256,21 @@ void sendImage() {
   if (statusDevice == 1) {
 
     Serial.println("ADQUIRE IMAGE");
-    //VideoSetting config(VIDEO_HD, CAM_FPS, VIDEO_JPEG, 1);
 
     if(resolution = "1"){
-      Serial.println("VIDEO FHD IMAGE");
-      VideoSetting config(VIDEO_FHD, CAM_FPS, VIDEO_JPEG, 1);
+      Serial.println("VIDEO FHD IMAGE**************");
+      
+
     }else{
-      Serial.println("VIDEO HD IMAGE");
-      VideoSetting config(VIDEO_FHD, CAM_FPS, VIDEO_JPEG, 1);
+      Serial.println("VIDEO HD IMAGE----------------");
+      
     }
+
+    //configCam.setExposureTime(3);
+    //configCam.se
+    //configCam.;
+    configCam.setSharpness(25);
+    configCam.setLDC(1);
 
     Camera.configVideoChannel(CHANNEL, config);
     Camera.videoInit();
@@ -329,6 +280,8 @@ void sendImage() {
 
     Camera.getImage(CHANNEL, &img_addr, &img_len);
     encodejpg();
+
+    Camera.channelEnd(CHANNEL);
 
     docOut["img64"] = encodedData;
   }
@@ -370,7 +323,6 @@ void sendImage() {
   String jsonString;
   serializeJson(docOut, jsonString);
 
-
   Serial.println("-------------------");
 
   int sizeString = jsonString.length();
@@ -379,15 +331,17 @@ void sendImage() {
   Serial.println(String(sizeString));
   Serial.println(String(Nparts));
 
+  reconnect();
+
   for (int i = 0; i < Nparts; i++) {
     char fragmento[chunkSize + 1];
     strncpy(fragmento, jsonString.c_str() + (i * chunkSize), chunkSize);
-    fragmento[chunkSize] = '\0';  // Asegurar terminación
+    fragmento[chunkSize] = '\0'; 
 
     char topicFragmentado[50];
     sprintf(topicFragmentado, "%s/%s/%d/%d",imageTopic,macAddr().c_str(),Nparts,i);
 
-    client.publish(topicFragmentado, fragmento);
+    client.publish(topicFragmentado,fragmento);
     delay(100);  // Pequeña pausa entre envíos
   }
 
@@ -502,10 +456,9 @@ void setup() {
 
   //getcsrfHttp();
 
-  Serial.println("start send image ------>");
-  sendImage();
+  sendData();
 
-  delay(1500);
+  delay(2500);
 
   wifiClient.stop();
 
