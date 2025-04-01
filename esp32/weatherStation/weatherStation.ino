@@ -1,4 +1,4 @@
-/*AMEBA PRODUCTION*/
+/*weather station PRODUCTION 15-02-2025*/
 #define ARDUINOJSON_STRING_LENGTH_SIZE 4
 
 #include "time.h"
@@ -25,13 +25,13 @@ String RUNpass = "";
 
 int port = 8000;
 
-const char sHostname_buffer[] = "http://192.168.3.31";  //192.168.3.31:8000/devices/api/items/1/ 24.199.125.52
+//const char sHostname_buffer[] = "http://192.168.3.31";  //192.168.3.31:8000/devices/api/items/1/ 24.199.125.52
 
 //char sHostname_buffer[50] = ;
 String sHostname = "";
 
 uint64_t uS_TO_S_FACTOR = 1000000UL; // factor to time sleep
-uint64_t TIME_TO_SLEEP = 25; // time deep sleep - minutes
+uint64_t TIME_TO_SLEEP = 60; // time deep sleep - minutes
 RTC_DATA_ATTR int bootCount = 0; // count
 RTC_DATA_ATTR time_t sleep_enter_time;
 
@@ -55,26 +55,35 @@ String DeviceMacAddress = "";
 boolean A_TH = false;
 boolean A_WP = false;
 boolean A_RS = false;
-uint32_t SleepTime = 60;
 
 String csrfToken = "";
 
 const char* PARAM_SSID = "ssidString";
 const char* PARAM_PASS = "passString";
-const char* PARAM_DEEP_SLEEP = "deepSleepTime";
-const char* PARAM_TANK_HEIGHT = "tankHeight";
+const char* PARAM_SERVER= "server";
+const char* PARAM_PORT = "port";
 const char* PARAM_RESET = "reset";
 
 /* ====================== DEVICE SETTINGS ======================== */
-#define pinBattery A0           // pin Battery
+#define RUN GPIO_NUM_25         // RPI control PIN 25
+#define pinBattery 39           // pin Battery
 #define pinWindDirection 35     // pin Wind direction
-#define pinWindVelocity 26     // pin Wind direction
-#define pinConfigAP 10          //enter configuration Acces point mode
-#define RAINCOUNT GPIO_NUM_7   // wake up by rain counter pin 14 2^7 0x0080 
+#define pinWindVelocity 26      // pin Wind direction
+#define pinConfigAP 23          //enter configuration Acces point mode
+#define RAINCOUNT GPIO_NUM_14   // wake up by rain counter pin 14 2^7 0x0080 
 
-#define DHTPIN 4
+#define DHTPIN 13
+#define LED 2
 #define DHTTYPE DHT21
 DHT dht(DHTPIN, DHTTYPE);
+
+/* ====================== RS485 SETTINGS ======================== */
+#define RX_PIN 16  // Pin RX del ESP32
+#define TX_PIN 17  // Pin TX del ESP32
+#define BAUD_RATE 4800
+#define SERIAL_MODE SERIAL_8N1
+#define MAX_BUFFER 64
+uint8_t buffer[MAX_BUFFER];
 
 /* ====================== HTML PAGE ======================== */
 const char index_html[] PROGMEM = R"rawliteral(
@@ -130,6 +139,22 @@ const char index_html[] PROGMEM = R"rawliteral(
     <tr>
     <td>Pass: </td>
     <td><input type="text" name="passString" value = %passString%></td>
+    <td><input type="submit" value="Save" onclick="submitMessage()"></td>
+    </tr>
+    </form>
+
+    <form action="/get" target="hidden-form">
+    <tr>
+    <td>Server: </td>
+    <td><input type="text" name="server" value = %server%></td>
+    <td><input type="submit" value="Save" onclick="submitMessage()"></td>
+    </tr>
+    </form>
+
+    <form action="/get" target="hidden-form">
+    <tr>
+    <td>Port: </td>
+    <td><input type="text" name="port" value = %port%></td>
     <td><input type="submit" value="Save" onclick="submitMessage()"></td>
     </tr>
     </form>
@@ -190,21 +215,38 @@ String processor(const String& var) {
     return readFile(SPIFFS, "/ssidString.txt");
   } else if (var == "passString") {
     return readFile(SPIFFS, "/passString.txt");
-  } else if (var == "deepSleepTime") {
-    return readFile(SPIFFS, "/deepSleepTime.txt");
-  } else if (var == "tankHeight") {
-    return readFile(SPIFFS, "/tankHeight.txt");
+  } else if (var == "server") {
+    return readFile(SPIFFS, "/server.txt");
+  } else if (var == "port") {
+    return readFile(SPIFFS, "/port.txt");
   } else if (var == "MAC") {
     return WiFi.macAddress();
   } else if (var == "value") {
-    float hum = dht.readHumidity();
-    float temp= dht.readTemperature();
-    return String(hum,1) + "per | " + String(temp,1) + " C";
+    double hum = dht.readHumidity();
+    double temp= dht.readTemperature();
+    return String(hum,1) + " per | " + String(temp,1) + " C";
   } else if (var == "dato") {
     String vol = vBat();
     return vol;
   }
   return String();
+}
+
+/* ========================= FUNCTIONS ========================= */
+void deepSleepSystem(){
+
+  digitalWrite(LED, LOW);
+
+  //TIME_TO_SLEEP = readFile(SPIFFS, "/timesleep.txt").toInt(); 
+
+  // deep sleep start 
+  Serial.print("sleep for min: **************************");
+  //TIME_TO_SLEEP = 1;
+  Serial.println(TIME_TO_SLEEP);
+  uint64_t SLEEPTIME = TIME_TO_SLEEP;
+  esp_sleep_enable_timer_wakeup(SLEEPTIME * 60 * uS_TO_S_FACTOR);
+  //Serial.flush(); 
+  esp_deep_sleep_start();
 }
 
 /* ====================== SETTING ======================== */
@@ -234,14 +276,14 @@ void setting() {
       writeFile(SPIFFS, "/passString.txt", inputMessage.c_str());
     }
     // GET inputInt value on <ESP_IP>/get?inputInt=<inputMessage>
-    else if (request->hasParam(PARAM_DEEP_SLEEP)) {
-      inputMessage = request->getParam(PARAM_DEEP_SLEEP)->value();
-      writeFile(SPIFFS, "/deepSleepTime.txt", inputMessage.c_str());
+    else if (request->hasParam(PARAM_SERVER)) {
+      inputMessage = request->getParam(PARAM_SERVER)->value();
+      writeFile(SPIFFS, "/server.txt", inputMessage.c_str());
     }
     // GET inputInt value on <ESP_IP>/get?inputInt=<inputMessage>
-    else if (request->hasParam(PARAM_TANK_HEIGHT)) {
-      inputMessage = request->getParam(PARAM_TANK_HEIGHT)->value();
-      writeFile(SPIFFS, "/tankHeight.txt", inputMessage.c_str());
+    else if (request->hasParam(PARAM_PORT)) {
+      inputMessage = request->getParam(PARAM_PORT)->value();
+      writeFile(SPIFFS, "/port.txt", inputMessage.c_str());
     }
     // GET inputInt value on <ESP_IP>/get?inputInt=<inputMessage>
     else if (request->hasParam(PARAM_RESET)) {
@@ -250,7 +292,7 @@ void setting() {
     else {
       inputMessage = "No message sent";
     }
-    //Serial.println(inputMessage);
+
     request->send(200, "text/text", inputMessage);
   });
 
@@ -272,12 +314,16 @@ void getHttp() {
   HTTPClient http;
   String mac = WiFi.macAddress();
   SearchPath = SearchPath + mac;
-  Serial.println(sHostname_buffer);
+
+  String SERVER = readFile(SPIFFS, "/server.txt");
+  String Port = readFile(SPIFFS, "/port.txt");
+
+  Serial.println(SERVER);
   Serial.println(SearchPath);
-  Serial.println(port);
+  Serial.println(Port);
 
   String msg_in = "";
-  String urlComplet = String(sHostname_buffer) + ":" + String(port) + SearchPath;
+  String urlComplet = "http://" + String(SERVER) + ":" + Port + SearchPath;
 
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println(urlComplet);
@@ -313,12 +359,12 @@ void getHttp() {
   A_TH = a_TH;
   A_WP = a_WP;
   A_RS = a_RS;
-  SleepTime = sleepTime;
+  TIME_TO_SLEEP = sleepTime;
 
   Serial.println(DeviceName);
   Serial.println(DeviceMacAddress);
   Serial.println(A_TH);
-  Serial.println(SleepTime);
+  Serial.println(TIME_TO_SLEEP);
   
 }
 
@@ -327,8 +373,11 @@ void getcsrfHttp() {
 
   HTTPClient http;
 
+  String SERVER = readFile(SPIFFS, "/server.txt");
+  String Port = readFile(SPIFFS, "/port.txt");
+
   String msg_in = "";
-  String urlComplet = String(sHostname_buffer) + ":" + String(port) + csrfPath;
+  String urlComplet = "http://" + String(SERVER) + ":" + Port + csrfPath;
   
   if (WiFi.status() == WL_CONNECTED) {
     http.begin(urlComplet);
@@ -355,13 +404,6 @@ void getcsrfHttp() {
  
 }
 
-String vBat(){
-  long raw = map(analogRead(pinBattery),204,453,201,368);
-  //long raw = analogRead(pinBattery);
-
-  return String(raw*0.01,2);
-}
-
 /* =========================== POST DATA =============================*/
 void postHttp() {
 
@@ -371,9 +413,6 @@ void postHttp() {
     dht.begin();
     float h = dht.readHumidity();
     float t = dht.readTemperature();
-    Serial.println("************");
-    Serial.println(h);
-    Serial.println(t);
     
     int cont = 0;
     while (isnan(t) || isnan(h) || (h == 1.00 && t == 1.00)) 
@@ -401,7 +440,17 @@ void postHttp() {
   }
 
   if(A_RS){
-    docOut["Radiation"] = 32;
+    int rad = radRS485();
+    int counter = 0;
+    while(rad < 0){
+      rad = radRS485();
+      delay(1000);
+      if(counter >= 5){
+        break;
+      } 
+      counter++;
+    }
+    docOut["Radiation"] = rad;
   }
 
   docOut["DeviceMacAddress"] = WiFi.macAddress();
@@ -412,8 +461,11 @@ void postHttp() {
 
   Serial.println(jsonString);
 
+  String SERVER = readFile(SPIFFS, "/server.txt");
+  String Port = readFile(SPIFFS, "/port.txt");
+
   String request = "POST /data/api/post-weather-station HTTP/1.1\r\n";
-  request += "Host: " + String(sHostname_buffer) + "\r\n";
+  request += "Host: http://" + SERVER + "\r\n";
   request += "Content-Type: application/json\r\n";
   request += "X-CSRFToken: " + csrfToken +  "\r\n";
   request += "Cookie: csrftoken=" + csrfToken + "\r\n";
@@ -423,8 +475,7 @@ void postHttp() {
   request += jsonString;
 
   HTTPClient http;
-
-  String urlComplet = String(sHostname_buffer) + ":" + String(port) + postPath;
+  String urlComplet = "http://" + SERVER + ":" + Port + postPath;
   http.begin(urlComplet);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-CSRFToken",csrfToken);
@@ -451,6 +502,43 @@ void postHttp() {
     wifiClient.print(request);
   }
   */
+}
+
+String vBat(){
+  long raw = map(analogRead(pinBattery),204,453,201,368);
+  //long raw = map(analogRead(pinBattery),698,2416,199,602);
+  return String(raw*0.01,2);
+}
+
+/* ====================== READ LEVEL RS485 ======================== */
+int radRS485() {
+
+  uint8_t command[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x01, 0x84, 0x0A};
+  size_t len = sizeof(command);
+  Serial2.write(command, len);
+  Serial2.flush(); 
+
+  int bytesLeidos = 0;
+  unsigned long tiempoInicio = millis();
+  
+  while (millis() - tiempoInicio < 1000) {  // Timeout de 1 segundo
+    if (Serial2.available()) {
+      buffer[bytesLeidos] = Serial2.read();
+      bytesLeidos++;
+      
+      if (bytesLeidos >= MAX_BUFFER) {
+        break;
+      }
+    }
+  }
+
+  int int_numero = -1;
+
+  if (bytesLeidos > 0) {
+    int_numero = (byte)buffer[3] << 8 | (byte)buffer[4];
+  }
+
+  return int_numero;
 }
 
 /* =========================== WIFI STATUS =============================*/
@@ -627,23 +715,27 @@ void init_running() {
 
     delay(500);
 
-    Serial.print("sleep for min: ");
+    deepSleepSystem();
+
+    /*Serial.print("sleep for min: ");
     Serial.println(TIME_TO_SLEEP);
+
+    TIME_TO_SLEEP = readFile(SPIFFS, "/timesleep.txt").toInt(); 
     uint64_t SLEEPTIME = TIME_TO_SLEEP;
-    esp_deep_sleep_enable_gpio_wakeup(BIT(D5), ESP_GPIO_WAKEUP_GPIO_LOW);
+    //esp_deep_sleep_enable_gpio_wakeup(BIT(D5), ESP_GPIO_WAKEUP_GPIO_LOW);
     esp_sleep_enable_timer_wakeup(SLEEPTIME * 60 * uS_TO_S_FACTOR);
-    esp_deep_sleep_start();
+    esp_deep_sleep_start();*/
   }
 }
 
 void setup() {
   Serial.begin(115200);
+  Serial2.begin(BAUD_RATE, SERIAL_MODE, RX_PIN, TX_PIN);
   dht.begin();
-  //readConfigFromSD();
-
-  //rtc_gpio_pullup_en(RAINCOUNT);          // wake up by rain counter
-  //esp_sleep_enable_ext1_wakeup(0x0080,ESP_EXT1_WAKEUP_ALL_LOW); // Pin GPIO7 to rain counter
-  esp_deep_sleep_enable_gpio_wakeup(0x0080, ESP_GPIO_WAKEUP_GPIO_LOW);
+  pinMode(LED,OUTPUT);
+  digitalWrite(LED,HIGH);
+  rtc_gpio_pullup_en(RAINCOUNT);          // wake up by rain counter
+  esp_sleep_enable_ext1_wakeup(0x4000,ESP_EXT1_WAKEUP_ALL_LOW); // Pin 14 to rain counter
   
   // INIT SPIFFS MODULE
   if (!SPIFFS.begin(true)) {
@@ -656,6 +748,12 @@ void setup() {
 }
 
 void loop() {
+
+  if((millis() - previousTime) > 40000){
+    Serial.println(millis() - previousTime);
+    Serial.println("sleep for overtime");
+    deepSleepSystem(); // poweroff
+  }
   
 }
 

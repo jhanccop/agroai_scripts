@@ -221,8 +221,6 @@ void getHttp() {
     sys_reset();
   }
 
-
-
   http.stop();
   
 }
