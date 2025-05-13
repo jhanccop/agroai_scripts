@@ -6,7 +6,9 @@
 
 #define CHANNEL 0
 
+//VideoSetting config(1920, 1080, CAM_FPS, VIDEO_JPEG, 1);
 VideoSetting config(CHANNEL);
+//VideoSetting config(1920, 1080, CAM_FPS, VIDEO_JPEG, 1);
 MP4Recording mp4;
 StreamIO videoStreamer(1, 1);  // 1 Input Video -> 1 Output RTSP
 
@@ -158,6 +160,7 @@ void writeFile(String fileName, String payload, boolean newLine) {
 void setup() {
   timeoutStart = millis();
   Serial.begin(115200);
+  
   pinMode(LED_G, OUTPUT);
   digitalWrite(LED_G, HIGH);
   

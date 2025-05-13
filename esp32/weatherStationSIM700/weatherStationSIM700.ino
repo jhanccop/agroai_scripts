@@ -72,7 +72,7 @@ TinyGsmClient espClient(modem); // ACTIVAR PARA SIM
 #define SD_CS               13
 #define LED_PIN             12
 
-#include <PubSubClient.h>
+
 
 const char* ssid = "DATAGREEN-WEATHER-STATION";     // original ssid
 const char* password = "12345678";  // original password
@@ -88,16 +88,13 @@ const char* PARAM_DEEP_SLEEP = "deepSleepTime";
 const char* PARAM_TANK_HEIGHT = "tankHeight";
 const char* PARAM_RESET = "reset";
 
-/* ====================== MQTT ======================== */
-const char *broker = "broker.hivemq.com"; // broker.emqx.io
-const int mqtt_port = 1883;
-const char *topicSubscribe = "jhpOandG/device";
-const char *topicPublish = "jhpOandG/data";
-
-//WiFiClient espClient;
-PubSubClient client(espClient);
-
 /* ====================== DEVICE SETTINGS ======================== */
+#define pinBattery 39           // pin Battery
+#define pinWindDirection 35     // pin Wind direction
+#define pinWindVelocity 26      // pin Wind direction
+#define pinConfigAP 23          //enter configuration Acces point mode
+#define RAINCOUNT GPIO_NUM_14   // wake up by rain counter pin 14 2^7 0x0080 
+
 const int pinConfig = 23;
 
 String idTest;
@@ -263,31 +260,6 @@ String processor(const String& var) {
   return String();
 }
 
-/* ====================== CALLBACK ======================== */
-void callback(char *topic, byte *payload, unsigned int length) {
-  if (String(topic) == String(topicSubscribe) + "/" + WiFi.macAddress())
-  {
-    String msg_in = "";
-    for (int i = 0; i < length; i++)
-    {
-      msg_in += String((char)payload[i]);
-    }
-    Serial.println(msg_in);
-    StaticJsonDocument<50> docIn;
-    DeserializationError error = deserializeJson(docIn, msg_in);
-    if (error) {
-      //Serial.print(F("deserializeJson() failed: "));
-      //Serial.println(error.f_str());
-      return;
-    }
-    int Time = docIn["timeSleep"];
-    tankHeight = docIn["tankHeight"];
-    TIME_TO_SLEEP = Time;
-    writeFile(SPIFFS, "/deepSleepTime.txt", String(Time).c_str());
-    writeFile(SPIFFS, "/tankHeight.txt", String(tankHeight).c_str());
-    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
-  }
-}
 
 /* ====================== SETTING ======================== */
 void setting() {
