@@ -21,7 +21,14 @@ MQTT CHUNK DATA DOR RPI
 
 #include <esp_sleep.h>
 
-/* ====================== AP HTTP SERVER ======================== */
+/* ====================== AP SERVER ======================== */
+const char* ssidAP = "RelayControllerAP";
+const char* passwordAP = "control123";
+const char* hostAP = "192.168.4.1"; // IP del AP
+const int portAP = 80;
+String txId = "TX1"; // ID único para cada transmisor
+
+/* ====================== DHT SERVER ======================== */
 #include <DHT.h>;
 #define DHTPIN 13
 #define LED 2
@@ -71,6 +78,8 @@ boolean completed = false;
 boolean statusCam = false;
 boolean saveImage = false;
 boolean runningNN = false;
+boolean isContinue = false;
+float sensibility = 0.5;
 int refresh = 10;
 int pulsos = 0;
 
@@ -268,7 +277,8 @@ void getHttp() {
   Serial.println(Port);
 
   String msg_in = "";
-  String urlComplet = "http://" + String(SERVER) + ":" + String(Port) + SearchPath;
+  String urlComplet = "https://" + String(SERVER) + SearchPath;
+  //String urlComplet = "https://" + String(SERVER) + ":" + String(Port) + SearchPath;
 
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println(urlComplet);
@@ -296,6 +306,9 @@ void getHttp() {
   const char* resolution = docIn["Resolution"];
   boolean a_TH = docIn["A_TH"];
   boolean RunningNN = docIn["runningNN"];
+  boolean IsContinue = docIn["isContinue"];
+  float Sensibility = docIn["sensibility"];
+
   boolean Status = docIn["status"];
   int sleepTime = docIn["SleepTime"];
 
@@ -304,6 +317,9 @@ void getHttp() {
   Resolution = String(resolution);
   A_TH = a_TH;
   runningNN = RunningNN;
+  isContinue = IsContinue;
+  sensibility = Sensibility;
+  
   statusCam = Status;
   TIME_TO_SLEEP = sleepTime;
 
@@ -312,11 +328,17 @@ void getHttp() {
   Serial.println(Resolution);
   Serial.println(A_TH);
   Serial.println(runningNN);
+  Serial.println(isContinue);
+  Serial.println(sensibility);
   Serial.println(statusCam);
   Serial.println(TIME_TO_SLEEP);
 
+  saveSetting(String(DeviceMacAddress), "/macAddress.txt");
   saveSetting(String(Resolution), "/resolution.txt");
   saveSetting(String(runningNN), "/runningNN.txt");
+  saveSetting(String(isContinue), "/isContinue.txt");
+  saveSetting(String(sensibility), "/sensibility.txt");
+  saveSetting(String(TIME_TO_SLEEP), "/timesleep.txt");
 }
 
 void getcsrfHttp() {
@@ -328,7 +350,7 @@ void getcsrfHttp() {
   String Port = readFile(SPIFFS, "/port.txt");
 
   String msg_in = "";
-  String urlComplet = "http://" + String(SERVER) + ":" + String(Port) + csrfPath;
+  String urlComplet = "https://" + String(SERVER) + csrfPath;
   
   if (WiFi.status() == WL_CONNECTED) {
     http.begin(urlComplet);
@@ -399,7 +421,7 @@ void sendDataByPost() {
   Serial.println(jsonString);
 
   String request = "POST /data/api/post HTTP/1.1\r\n";
-  request += "Host: http://" + String(SERVER) + "\r\n";
+  request += "Host: https://" + String(SERVER) + "\r\n";
   //request += "Content-Type: application/json\r\n";
   request += "X-CSRFToken: " + csrfToken +  "\r\n";
   request += "Cookie: csrftoken=" + csrfToken + "\r\n";
@@ -410,7 +432,7 @@ void sendDataByPost() {
 
   HTTPClient http;
 
-  String urlComplet = "http://" + String(SERVER) + ":" + String(Port) + postPath;
+  String urlComplet = "https://" + String(SERVER) + postPath;
   http.begin(urlComplet);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-CSRFToken",csrfToken);
@@ -494,6 +516,25 @@ void setting() {
 
 }
 
+void connectWifi(){
+  //Connect and send initial data to get the configuration
+  runssid = readFile(SPIFFS, "/ssidString.txt");     // original ssid
+  runpassword = readFile(SPIFFS, "/passString.txt");  // original password
+
+  int n = 0;
+  WiFi.begin(runssid, runpassword);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(2000);
+    Serial.println(runssid);
+    Serial.println(runpassword);
+    Serial.println("Connecting to WiFi..");
+    if(n >= 5){
+      ESP.restart();
+    }
+    n++;
+  }
+}
+
 /* ====================== RUNNING ======================== */
 void init_running() {
   // SETTING MODE 
@@ -503,22 +544,8 @@ void init_running() {
     setting();
   } else {
     Serial.println("====> running mode");
-    //Connect and send initial data to get the configuration
-    runssid = readFile(SPIFFS, "/ssidString.txt");     // original ssid
-    runpassword = readFile(SPIFFS, "/passString.txt");  // original password
-
-    int n = 0;
-    WiFi.begin(runssid, runpassword);
-    while (WiFi.status() != WL_CONNECTED) {
-      delay(2000);
-      Serial.println(runssid);
-      Serial.println(runpassword);
-      Serial.println("Connecting to WiFi..");
-      if(n >= 5){
-        ESP.restart();
-      }
-      n++;
-    }
+    
+    connectWifi();
     
     getHttp();
 
@@ -528,9 +555,16 @@ void init_running() {
       rtc_gpio_hold_dis(RUN);
       rtc_gpio_set_level(RUN, HIGH);
       rtc_gpio_hold_en(RUN);
+
+      if(isContinue){
+        getcsrfHttp();
+        sendDataByPost();
+      }
+
     }else{
       getcsrfHttp();
       sendDataByPost();
+      
 
       delay(15000);
 
@@ -542,6 +576,7 @@ void init_running() {
     }
 
   delay(1000);
+  
   //rpiRequest();
   Serial.println("start deep sleep RUNING 2");
   
@@ -572,20 +607,26 @@ void stationSetup(){
   
   saveImage = readFile(SPIFFS, "/saveImage.txt").toInt();
   runningNN = readFile(SPIFFS, "/runningNN.txt").toInt();
+  isContinue = readFile(SPIFFS, "/isContinue.txt").toInt();
+  sensibility = readFile(SPIFFS, "/sensibility.txt").toFloat();
   Resolution = readFile(SPIFFS, "/resolution.txt");
   SERVER = readFile(SPIFFS, "/server.txt");
   Port = readFile(SPIFFS, "/port.txt");
+  int Tsleep = readFile(SPIFFS, "/timesleep.txt").toInt();
 
   JsonDocument doc;
 
   doc["saveImage"] = bool(saveImage);
+  doc["timeSleep"] = Tsleep;
   doc["runningNN"] = bool(runningNN);
+  doc["isContinue"] = bool(isContinue);
+  doc["sensibility"] = sensibility;
   doc["resolution"] = String(Resolution);
   doc["server"] = String(SERVER);
   doc["port"] = String(Port);
 
   //serializeJson(doc, Serial);
-  char output[600];
+  char output[650];
   serializeJson(doc, output);
 
   // SEND DATA BY SERIAL TO RASPBERRY
@@ -600,7 +641,8 @@ void dataEsp(){
   dht.begin(); // sensor
 
   JsonDocument docOut;
-  docOut["mac"] = WiFi.macAddress();  
+  String macAddress = readFile(SPIFFS, "/macAddress.txt"); 
+  docOut["mac"] = macAddress;
   docOut["T"] = String(dht.readTemperature(),2);
   docOut["H"] = String(dht.readHumidity(),2);
   docOut["B"] = vBat();                            // battery Voltage 5.08 v - 5.82 v
@@ -631,8 +673,6 @@ void dataEsp(){
   esp_sleep_enable_timer_wakeup(SLEEPTIME * uS_TO_S_FACTOR);
 
   esp_deep_sleep_start();
-
-
 }
 
 void rpiRequest(){
@@ -671,17 +711,53 @@ void rpiRequest(){
       }else if(String(msg) == "wifi"){
         infoWifi();
         deepSleepSystem();
-      }
-      else if(String(msg) == "sleep"){
+      }else if(String(msg) == "sleepESP"){
+        time_t now;
+        time(&now);
+
+        int sleep_time = difftime(now, sleep_enter_time);
+        Serial.printf("Tiempo en deep sleep: %d segundos\n", sleep_time);
+        
+        TIME_TO_SLEEP = readFile(SPIFFS, "/timesleep.txt").toInt(); 
+
+        /*--- deep sleep start ***/ 
+        Serial.println("sleep start RPI DEEP SLEEP");
+        Serial.println(sleep_enter_time);
+        Serial.println(now);
+        uint64_t SLEEPTIME = TIME_TO_SLEEP * 60 - sleep_time;
+        Serial.println(SLEEPTIME);
+        esp_sleep_enable_timer_wakeup(SLEEPTIME * uS_TO_S_FACTOR);
+
+        esp_deep_sleep_start();
+        
+      }else if(String(msg) == "sleep"){
+        delay(15000);
+
         rtc_gpio_init(RUN);
         rtc_gpio_set_direction(RUN, RTC_GPIO_MODE_OUTPUT_ONLY);
         rtc_gpio_hold_dis(RUN);
         rtc_gpio_set_level(RUN, LOW);
         rtc_gpio_hold_en(RUN);
 
-        delay(15000);
+        time_t now;
+        time(&now);
 
-        deepSleepSystem();
+        int sleep_time = difftime(now, sleep_enter_time);
+        Serial.printf("Tiempo en deep sleep: %d segundos\n", sleep_time);
+        
+        TIME_TO_SLEEP = readFile(SPIFFS, "/timesleep.txt").toInt(); 
+
+        /*--- deep sleep start ***/ 
+        Serial.println("sleep start RPI DEEP SLEEP");
+        Serial.println(sleep_enter_time);
+        Serial.println(now);
+        uint64_t SLEEPTIME = TIME_TO_SLEEP * 60 - sleep_time;
+        Serial.println(SLEEPTIME);
+        esp_sleep_enable_timer_wakeup(SLEEPTIME * uS_TO_S_FACTOR);
+
+        esp_deep_sleep_start();
+
+        //deepSleepSystem();
       }
     }
 
@@ -751,6 +827,9 @@ void setup() {
 
   Serial.begin(115200);
   Serial2.begin(115200,SERIAL_8N1,16,17);   // SERIAL CONNECT TO RPI
+
+  pinMode(RUN, OUTPUT);
+  digitalWrite(RUN, LOW);
 
   // WAKE UP SETTINGS
   rtc_gpio_pulldown_en(ESP32MAN);           // wake up by rpi requests

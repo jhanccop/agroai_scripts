@@ -71,6 +71,9 @@ const char* PARAM_RESET = "reset";
 #define pinWindVelocity 26      // pin Wind direction
 #define pinConfigAP 23          //enter configuration Acces point mode
 #define RAINCOUNT GPIO_NUM_14   // wake up by rain counter pin 14 2^7 0x0080 
+#define DEBOUNCE_TIME 50
+
+unsigned long lastWakeupTime = 0;
 
 #define DHTPIN 13
 #define LED 2
@@ -749,7 +752,7 @@ void setup() {
 
 void loop() {
 
-  if((millis() - previousTime) > 40000){
+  if((millis() - previousTime) > 30000){
     Serial.println(millis() - previousTime);
     Serial.println("sleep for overtime");
     deepSleepSystem(); // poweroff

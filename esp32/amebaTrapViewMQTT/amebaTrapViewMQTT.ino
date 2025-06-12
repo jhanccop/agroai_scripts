@@ -20,6 +20,75 @@
 // wake up by RTC       :   2
 #define WAKEUP_SOURCE 2
 
+/* ======== WIFI AP CONNECT ======== */
+char ssidAP[]= "RelayControllerAP";      // Nombre del AP del receptor
+char passwordAP[]  = "control123";          // Contraseña del AP
+
+const char* hostAP = "192.168.4.1";            // IP fija del AP del receptor
+const int portAP = 80;                          // Puerto del servidor
+String txId = "AMB1"; 
+bool currentRelayState = false;
+
+/* ======== SETUP AP CONNECT ======== */
+void connectToWiFi() {
+
+  WiFi.begin(ssidAP, passwordAP);
+  
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+    digitalWrite(LED_B, !digitalRead(LED_B)); // LED parpadeante durante conexión
+  }
+  
+  Serial.println(WiFi.localIP());
+  digitalWrite(LED_B, HIGH); // LED fijo cuando conectado
+}
+
+void sendCommand(String command) {
+  connectToWiFi();
+
+  Serial.print("Enviando comando: ");
+  Serial.println(command);
+  
+  WiFiClient clientAP;
+  
+  if (!clientAP.connect(hostAP, portAP)) {
+    Serial.println("Fallo al conectar con el receptor");
+    digitalWrite(LED_G, LOW); // Indicar error
+    delay(200);
+    digitalWrite(LED_G, HIGH);
+    return;
+  }
+  
+  // Enviar el comando
+  clientAP.print(command + "\n");
+  
+  // Esperar respuesta
+  unsigned long timeout = millis();
+  while (clientAP.available() == 0) {
+    if (millis() - timeout > 2000) {
+      Serial.println("Timeout esperando respuesta");
+      clientAP.stop();
+      return;
+    }
+  }
+  
+  // Leer respuesta
+  String response = clientAP.readStringUntil('\n');
+  response.trim();
+  Serial.print("Respuesta: ");
+  Serial.println(response);
+  
+  // Actualizar estado del relé (si la respuesta incluye el estado)
+  if (response.startsWith("OK:")) {
+    currentRelayState = (response.substring(3) == "ON");
+    Serial.print("Estado actual del relé: ");
+    Serial.println(currentRelayState ? "ON" : "OFF");
+  }
+  
+  clientAP.stop();
+}
+
 /* ======== WIFI SETTINGS ======== */
 String RUNssid = "";
 String RUNpass = "";
@@ -43,7 +112,8 @@ char mqttServer[] = "24.199.125.52"; //24.199.125.52  broker.hivemq.com
 String clientId = "amb";
 char imageTopic[] = "jhpOandG/data/trapViewImage";
 char publishPayload[] = "hello world";
-char subscribeTopic[] = "inTopic";
+char topicSubscribe[] = "jhpOandG/settings";
+char topicPublish[] = "jhpOandG/data";
 //#define MQTT_MAX_PACKET_SIZE 50000
 
 PubSubClient client(wifiClient);
@@ -79,15 +149,119 @@ String resolution = "VIDEO_HD";
 #define DHTTYPE DHT21
 DHT dht(DHTPIN, DHTTYPE);
 
-void callback(char* topic, byte* payload, unsigned int length)
-{
-    Serial.print("Message arrived [");
-    Serial.print(topic);
-    Serial.print("] ");
-    for (unsigned int i = 0; i < length; i++) {
-        Serial.print((char)(payload[i]));
+/* ====================== CALLBACK ======================== */
+void callback(char *topic, byte *payload, unsigned int length) {
+  Serial.print("llegada de mensaje tpic ");
+  Serial.println(topic);
+
+  if(String(topic) == String(topicSubscribe) + "/" + macAddr()){
+    String msg_in = "";
+    for (unsigned int i = 0; i < length; i++)
+    {
+      msg_in += String((char)payload[i]);
     }
-    Serial.println();
+    Serial.println("llegada de mensaje seccion DEVICE ");
+    Serial.println(msg_in);
+
+    JsonDocument docIn;
+    DeserializationError error = deserializeJson(docIn, msg_in);
+    if (error) {
+      return;
+    }
+    const char* deviceName = docIn["DeviceName"];
+    const char* deviceMacAddress = docIn["DeviceMacAddress"];
+    boolean a_TH = docIn["A_TH"];
+    boolean RunningNN = docIn["runningNN"];
+    boolean Status = docIn["status"];
+    int sleepTime = docIn["SleepTime"];
+    const char* Resolution = docIn["Resolution"];
+
+    DeviceName = String(deviceName);
+    DeviceMacAddress = String(deviceMacAddress);
+    A_TH = a_TH;
+    SleepTime = sleepTime;
+    runningNN = RunningNN;
+    statusDevice = Status;
+    resolution = String(Resolution);
+
+    Serial.println(DeviceName);
+    Serial.println(DeviceMacAddress);
+    Serial.println(A_TH);
+    Serial.println(SleepTime);
+    Serial.println(runningNN);
+    Serial.println(statusDevice);
+    Serial.println(resolution);
+
+    sendData();
+  }
+}
+
+String macAddr(){
+  byte mac[6];
+  String result = "";
+  WiFi.macAddress(mac);
+  result =  String(mac[0], HEX) + ":" + String(mac[1], HEX) + ":" + String(mac[2], HEX) + ":" + String(mac[3], HEX) + ":" + String(mac[4], HEX) + ":" + String(mac[5], HEX);
+  //Serial.println(result);
+  return result;
+}
+
+void getConfig() {
+  JsonDocument docInit;
+  docInit["type"] = "trapViewSetting";
+  docInit["function"] = "setting";
+  docInit["mac"] = macAddr();
+
+  String payloadInit = "";
+  serializeJson(docInit, payloadInit);
+
+  Serial.println(payloadInit);
+  String topiSub = String(topicSubscribe) + "/" + macAddr();
+
+  reconnect();
+  
+  if (client.subscribe(topiSub.c_str())) {
+    Serial.println("Suscripción MQTT exitosa");
+  } else {
+    Serial.println("Fallo en suscripción MQTT");
+  }
+  client.publish(topicPublish, payloadInit.c_str());
+
+  
+}
+
+void shutdown(){
+  uint32_t ALARM_DAY = 0;
+  uint32_t ALARM_HOUR = 0;
+  uint32_t ALARM_MIN = 0;
+  uint32_t ALARM_SEC = 0;
+
+  switch(SleepTime){
+    case 2:
+      ALARM_MIN = 2;
+      break;
+    case 5:
+      ALARM_MIN = 5;
+      break;
+    case 30:
+      ALARM_MIN = 30;
+      break;
+    case 60:
+      ALARM_HOUR = 1;
+      break;
+    case 120:
+      ALARM_HOUR = 2;
+      break;
+    default:
+      ALARM_MIN = 60;
+      break;
+  }
+
+  uint32_t PM_rtc_Alarm[4] = {ALARM_DAY, ALARM_HOUR, ALARM_MIN, ALARM_SEC};
+  #define WAKUPE_SETTING (uint32_t)(PM_rtc_Alarm)
+
+  PowerMode.begin(DEEPSLEEP_MODE, WAKEUP_SOURCE, WAKUPE_SETTING);
+
+  PowerMode.start();
 }
 
 void reconnect()
@@ -97,10 +271,11 @@ void reconnect()
         Serial.print("\r\nAttempting MQTT connection...");
         // Attempt to connect
         clientId += macAddr();
+        String topiSub = String(topicSubscribe) + "/" + macAddr();
         if (client.connect(clientId.c_str())) {
             Serial.println("connected");
             // Once connected, publish an announcement and resubscribe
-            //client.subscribe(subscribeTopic);
+            client.subscribe(topiSub.c_str());
         } else {
             Serial.println("failed, rc=");
             Serial.print(client.state());
@@ -111,22 +286,13 @@ void reconnect()
     }
 }
 
-String macAddr(){
-  byte mac[6];
-  String result = "";
-  WiFi.macAddress(mac);
-  result =  String(mac[0], HEX) + ":" + String(mac[1], HEX) + ":" + String(mac[2], HEX) + ":" + String(mac[3], HEX) + ":" + String(mac[4], HEX) + ":" + String(mac[5], HEX);
-  Serial.println(result);
-  return result;
-}
-
 /* =========================== GET SETTINGS =============================*/
 void getHttp() {
   int err0 = 0;
   int err1 = 0;
   int err2 = 0;
 
-  WiFiClient c;
+  WiFiSSLClient c;
   HttpClient http(c);
 
   String mac = macAddr();
@@ -347,7 +513,7 @@ void sendData() {
 
   digitalWrite(LED_G, LOW);
 
-  
+  shutdown();
 }
 
 /* =========================== WIFI STATUS =============================*/
@@ -410,11 +576,9 @@ void readConfigFromSD(){
 
 }
 
-void setup() {
-  Serial.begin(115200);
-  dht.begin();
-  readConfigFromSD();
-
+/* ============================== SETUP WIFI ============================== */
+void setup_wifi() {
+  //Connect and send initial data to get the configuration
   int n = 0;
   
   while (status != WL_CONNECTED) {
@@ -440,62 +604,55 @@ void setup() {
   Serial.println("Connected to wifi");
   printWifiStatus();
 
-  getHttp();
-
   wifiClient.setNonBlockingMode();
 
+  Serial.println("Connected to wifi");
   client.setServer(mqttServer, 1883);
   client.setCallback(callback);
+}
+
+void setup() {
+  Serial.begin(115200);
+  dht.begin();
+  readConfigFromSD();
+
+  //sendCommand(txId + ":ON");
+
+  //delay(10000);
+
+  setup_wifi();
+
+  //
+
+  //client.setServer(mqttServer, 1883);
+  //client.setCallback(callback);
 
   if (!(client.connected())) {
     reconnect();
   }
   client.loop();
 
+  getConfig();
+
   //getcsrfHttp();
 
-  sendData();
+  //sendData();
 
   delay(2500);
 
-  wifiClient.stop();
+  //wifiClient.stop();
 
-  uint32_t ALARM_DAY = 0;
-  uint32_t ALARM_HOUR = 0;
-  uint32_t ALARM_MIN = 0;
-  uint32_t ALARM_SEC = 0;
+  //sendCommand(txId + ":OFF");
 
-  switch(SleepTime){
-    case 2:
-      ALARM_MIN = 2;
-      break;
-    case 5:
-      ALARM_MIN = 5;
-      break;
-    case 30:
-      ALARM_MIN = 30;
-      break;
-    case 60:
-      ALARM_HOUR = 1;
-      break;
-    case 120:
-      ALARM_HOUR = 2;
-      break;
-    default:
-      ALARM_MIN = 60;
-      break;
-  }
-
-  uint32_t PM_rtc_Alarm[4] = {ALARM_DAY, ALARM_HOUR, ALARM_MIN, ALARM_SEC};
-  #define WAKUPE_SETTING (uint32_t)(PM_rtc_Alarm)
-
-  PowerMode.begin(DEEPSLEEP_MODE, WAKEUP_SOURCE, WAKUPE_SETTING);
-
-  PowerMode.start();
+ 
 }
 
 void loop() {
-  
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
+  delay(50);
 }
 
 

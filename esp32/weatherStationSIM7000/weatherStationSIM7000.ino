@@ -59,7 +59,6 @@ const char gprsPass[] = "";
   TinyGsm modem(SerialAT);
 #endif
 
-TinyGsmClient espClient(modem); // ACTIVAR PARA SIM
 
 // LilyGO T-SIM7000G Pinout
 #define UART_BAUD           115200
@@ -72,8 +71,7 @@ TinyGsmClient espClient(modem); // ACTIVAR PARA SIM
 #define SD_MOSI             15
 #define SD_SCLK             14
 #define SD_CS               13
-//#define LED_PIN             12
-#define LED                 2
+#define LED_PIN             12
 
 /* ============================== DEVICE CONFIGURATIONS ============================== */
 
@@ -89,7 +87,7 @@ int pulsos = 0;
 
 boolean flag = true;
 
-#define BUTTON_PIN_BITMASK 0x200000000 // 2^33 in hex wakw up by ext0
+//#define BUTTON_PIN_BITMASK 0x200000000 // 2^33 in hex wakw up by ext0
 
 String SearchPath = "/devices/api/buscar-weather-station/?mac=";
 String csrfPath = "/get-csrf/";
@@ -100,7 +98,7 @@ int statusW = WL_IDLE_STATUS;
 String DeviceName = "";
 String DeviceMacAddress = "";
 boolean A_TH = false;
-boolean A_WP = false;
+boolean A_WS = false;
 boolean A_RS = false;
 
 String csrfToken = "";
@@ -112,12 +110,27 @@ const char* PARAM_PORT = "port";
 const char* PARAM_RESET = "reset";
 const char* PARAM_CONN_TYPE = "connType";
 
+/* ====================== MQTT ======================== */
+//const char *broker = "broker.emqx.io"; // broker.hivemq.com
+const char *broker = "24.199.125.52";
+const int mqtt_port = 1883;
+const char *topicSubscribe = "jhpOandG/settings";
+const char *topicPublish = "jhpOandG/data";
+
+#include <PubSubClient.h>
+TinyGsmClient client(modem); // GPRS
+PubSubClient  simclient(client);
+
+WiFiClient espClient;       // WIFI
+PubSubClient wificlient(espClient);
+
 /* ====================== DEVICE SETTINGS ======================== */
-#define pinBattery 39           // pin Battery
+#define pinBattery 35           // pin Battery
 #define pinWindDirection 36     // pin Wind direction
 #define pinWindVelocity 19      // pin Wind direction
 #define pinConfigAP 23          //enter configuration Acces point mode
 #define RAINCOUNT GPIO_NUM_34   // wake up by rain counter pin 14 2^7 0x0080 
+String connectionType = "";
 
 /* ====================== RS485 SETTINGS ======================== */
 #define RX_PIN 33  // Pin RX 16 del ESP32
@@ -126,6 +139,7 @@ const char* PARAM_CONN_TYPE = "connType";
 #define SERIAL_MODE SERIAL_8N1
 #define MAX_BUFFER 64
 uint8_t buffer[MAX_BUFFER];
+#define PINRS485 21
 
 /* ====================== HTML PAGE ======================== */
 const char index_html[] PROGMEM = R"rawliteral(
@@ -250,6 +264,13 @@ String readFile(fs::FS &fs, const char * path) {
   return fileContent;
 }
 
+void saveSetting(String value, String fil){
+  String orValue = readFile(SPIFFS, fil.c_str());
+  if(orValue != value ){
+    writeFile(SPIFFS, fil.c_str(), value.c_str());
+  }
+}
+
 void writeFile(fs::FS &fs, const char * path, const char * message) {
   //Serial.printf("Writing file: %s\r\n", path);
   File file = fs.open(path, "w");
@@ -266,7 +287,6 @@ void writeFile(fs::FS &fs, const char * path, const char * message) {
 }
 
 String macA(){
-  
   return String("B4:8A:0A:6E:F1:20");
 }
 
@@ -310,10 +330,8 @@ String processor(const String& var) {
 /* ========================= FUNCTIONS ========================= */
 void deepSleepSystem(){
 
-  digitalWrite(LED, LOW);
-
-  //TIME_TO_SLEEP = readFile(SPIFFS, "/timesleep.txt").toInt(); 
-
+  digitalWrite(LED_PIN, HIGH);
+  TIME_TO_SLEEP = readFile(SPIFFS, "/timesleep.txt").toInt(); 
   // deep sleep start 
   Serial.print("sleep for min: **************************");
   //TIME_TO_SLEEP = 1;
@@ -402,209 +420,22 @@ void setting() {
 
 }
 
-/* =========================== GET SETTINGS =============================*/
-void getHttp() {
-  int err = 0;
-
-  HTTPClient http;
-  //String mac = WiFi.macAddress();
-  String mac = macA();
-  SearchPath = SearchPath + mac;
-
-  String SERVER = readFile(SPIFFS, "/server.txt");
-  String Port = readFile(SPIFFS, "/port.txt");
-
-  Serial.println(SERVER);
-  Serial.println(SearchPath);
-  Serial.println(Port);
-
-  String msg_in = "";
-  String urlComplet = "http://" + String(SERVER) + ":" + Port + SearchPath;
-
-
-  Serial.println(urlComplet);
-  
-  http.begin( urlComplet);
-  err = http.GET();
-  if (err > 0) {
-    msg_in = http.getString();
-    Serial.println("Código HTTP: " + String(err));
-    Serial.println("Respuesta: " + msg_in);
-  } else {
-    Serial.println("Error en petición GET");
-  }
-  http.end();
-  Serial.println(msg_in);
-  
-
-  JsonDocument docIn;
-  DeserializationError error = deserializeJson(docIn, msg_in);
-  if (error) {
-    return;
-  }
-  const char* deviceName = docIn["DeviceName"];
-  const char* deviceMacAddress = docIn["DeviceMacAddress"];
-  boolean a_TH = docIn["A_TH"];
-  boolean a_WP = docIn["A_WP"];
-  boolean a_RS = docIn["A_RS"];
-  int sleepTime = docIn["SleepTime"];
-
-  DeviceName = String(deviceName);
-  DeviceMacAddress = String(deviceMacAddress);
-  A_TH = a_TH;
-  A_WP = a_WP;
-  A_RS = a_RS;
-  TIME_TO_SLEEP = sleepTime;
-
-  Serial.println(DeviceName);
-  Serial.println(DeviceMacAddress);
-  Serial.println(A_TH);
-  Serial.println(TIME_TO_SLEEP);
-  
-}
-
-void getcsrfHttp() {
-  int err = 0;
-
-  HTTPClient http();
-
-  String SERVER = readFile(SPIFFS, "/server.txt");
-  String Port = readFile(SPIFFS, "/port.txt");
-
-  String msg_in = "";
-  String urlComplet = "http://" + String(SERVER) + ":" + Port + csrfPath;
-
-  http.begin(urlComplet);
-  err = http.GET();
-  if (err > 0) {
-    msg_in = http.getString();
-    Serial.println("Código HTTP: " + String(err));
-    Serial.println("Respuesta: " + msg_in);
-  } else {
-    Serial.println("Error en petición GET");
-  }
-  http.end();
-  Serial.println(msg_in);
-
-
-  JsonDocument docIn;
-  DeserializationError error = deserializeJson(docIn, msg_in);
-  if (error) {
-    return;
-  }
-  const char* CsrfToken = docIn["csrfToken"];
-  csrfToken = String(CsrfToken);
- 
-}
-
-/* =========================== POST DATA =============================*/
-void postHttp() {
-
-  JsonDocument docOut;
-
-  if(A_TH){
-    dht.begin();
-    float h = dht.readHumidity();
-    float t = dht.readTemperature();
-    
-    int cont = 0;
-    while (isnan(t) || isnan(h) || (h == 1.00 && t == 1.00)) 
-    {
-      dht.begin();
-      Serial.println("Failed to read from DHT");
-      h = dht.readHumidity();
-      t = dht.readTemperature();
-      
-      if(cont >= 10){
-        break;
-      }
-      cont++;
-      delay(2000);
-    }
-
-    docOut["Humidity"] = String(h,2);
-    docOut["Temperature"] = String(t,2);
-  }
-
-  if(A_WP){
-    docOut["WindVelocity"] = WindVelocity();
-    docOut["WindDirection"] = WindDirection();
-    docOut["RainCounter"] = readFile(SPIFFS, "/ssidRainCounter.txt").toInt();
-  }
-
-  if(A_RS){
-    int rad = radRS485();
-    int counter = 0;
-    while(rad < 0){
-      rad = radRS485();
-      delay(1000);
-      if(counter >= 5){
-        break;
-      } 
-      counter++;
-    }
-    docOut["Radiation"] = rad;
-  }
-
-  docOut["DeviceMacAddress"] = WiFi.macAddress();
-  docOut["VoltageBattery"] = vBat();
-
-  String jsonString;
-  serializeJson(docOut, jsonString);
-
-  Serial.println(jsonString);
-
-  String SERVER = readFile(SPIFFS, "/server.txt");
-  String Port = readFile(SPIFFS, "/port.txt");
-
-  String request = "POST /data/api/post-weather-station HTTP/1.1\r\n";
-  request += "Host: http://" + SERVER + "\r\n";
-  request += "Content-Type: application/json\r\n";
-  request += "X-CSRFToken: " + csrfToken +  "\r\n";
-  request += "Cookie: csrftoken=" + csrfToken + "\r\n";
-  request += "Content-Length: " + String(jsonString.length()) + "\r\n";
-  request += "Connection: keep-alive\r\n";
-  request += "\r\n";
-  request += jsonString;
-
-  HTTPClient http;
-  String urlComplet = "http://" + SERVER + ":" + Port + postPath;
-  http.begin(urlComplet);
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("X-CSRFToken",csrfToken);
-  http.addHeader("Cookie: csrftoken=",csrfToken);
-  http.addHeader("Content-Length",String(jsonString.length()));
-  http.addHeader("Connection","keep-alive");
-
-  int httpCode = http.POST(jsonString);
-    
-  if (httpCode > 0) {
-    String respuesta = http.getString();
-    Serial.println("Código HTTP: " + String(httpCode));
-    Serial.println("Respuesta: " + respuesta);
-  } else {
-    Serial.println("Error en petición POST");
-  }
-  
-  http.end();
-
-  /*
-  wifiClient.setTimeout(30000);
-  if (wifiClient.connect(sHostname_buffer, port)) {
-    
-    wifiClient.print(request);
-  }
-  */
-}
-
 String vBat(){
-  long raw = map(analogRead(pinBattery),204,453,201,368);
+  int rawValue = analogRead(pinBattery);
+  float voltage = rawValue * (3.3 / 4095.0) * 3.0;
+
   //long raw = map(analogRead(pinBattery),698,2416,199,602);
-  return String(raw*0.01,2);
+  return String(voltage);
 }
 
 /* ====================== READ LEVEL RS485 ======================== */
 int radRS485() {
+
+  pinMode(PINRS485,OUTPUT);
+
+  digitalWrite(PINRS485, HIGH);
+
+  Serial2.begin(4800, SERIAL_MODE, RX_PIN, TX_PIN);
 
   uint8_t command[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x01, 0x84, 0x0A};
   size_t len = sizeof(command);
@@ -624,6 +455,8 @@ int radRS485() {
       }
     }
   }
+
+  digitalWrite(PINRS485, LOW);
 
   int int_numero = -1;
 
@@ -659,7 +492,7 @@ void runRainCounter(){
   rainCounter++;
   String counter = String(rainCounter);
   writeFile(SPIFFS, "/ssidRainCounter.txt", counter.c_str());
-  delay(200);
+  delay(500);
 
   //digitalWrite(LED, LOW);
 
@@ -684,23 +517,42 @@ void runRainCounter(){
 
 int WindDirection(){
   int dir[8] = {0,45,90,135,180,225,270,315};
-  int raw[8] = {3051, 1732, 234, 598, 1021, 2419, 3955, 3539};
+  //int raw[8] = {3051, 1732, 234, 598, 1021, 2419, 3955, 3539};
+  int raw[8] = {2770, 1618, 226, 575, 963, 2224, 3388, 3145};
 
-  int tol = 100;
+  int raws[4][8] = {
+    {2770, 1618, 226, 575, 963, 2224, 3388, 3145},
+    {2480, 1618, 234, 575, 790, 2224, 2930, 3145},
+    {1410, 1618, 240, 575, 805, 2224, 2917, 3145},
+    {3790, 1618, 125, 575, 352, 2224, 2917, 3145}};
+
+  int tol = 40;
   int val = analogRead(pinWindDirection);
+
   if(val > 4090){
     return -90;
   }
 
-  int value;
-  for(int i = 0; i < 8; i++){
-    if(abs(val - raw[i]) <= tol){
-      value = dir[i];
-      return value;
+  int value = -180;
+
+  for(int i = 0; i < 3; i++){
+    for(int j = 0; j < 8; j++){
+      if(abs(val - raws[i][j]) <= tol ){
+        value = dir[j];
+        break;
+      }
     }
   }
 
-  return -180;
+
+  //for(int i = 0; i < 8; i++){
+  //  if(abs(val - raw[i]) <= tol){
+  //    value = dir[i];
+  //    return value;
+  //  }
+  //}
+
+  return value;
 }
 
 float WindVelocity(){
@@ -723,6 +575,10 @@ float WindVelocity(){
 
 /* ====================== SIM FUNCTIONS ======================== */
 void modemPowerOn(){
+  //rtc_gpio_init(PWR_PIN);
+  //rtc_gpio_set_direction(PWR_PIN, RTC_GPIO_MODE_OUTPUT_ONLY);
+  //rtc_gpio_hold_dis(PWR_PIN);
+
   pinMode(PWR_PIN, OUTPUT);
   digitalWrite(PWR_PIN, LOW);
   delay(1000);
@@ -735,19 +591,165 @@ void modemPowerOff(){
   delay(1500);
   digitalWrite(PWR_PIN, HIGH);
 
-  rtc_gpio_init(PWR_PIN);
-  rtc_gpio_set_direction(PWR_PIN, RTC_GPIO_MODE_OUTPUT_ONLY);
-  rtc_gpio_set_level(PWR_PIN, 0);  // Establecer en ALTO antes del deep sleep
+  //rtc_gpio_init(PWR_PIN);
+  //rtc_gpio_set_direction(PWR_PIN, RTC_GPIO_MODE_OUTPUT_ONLY);
+  //rtc_gpio_set_level(PWR_PIN, HIGH);  // Establecer en ALTO antes del deep sleep
   
   // Mantener el estado del pin durante el deep sleep
-  gpio_hold_en(PWR_PIN);
-  gpio_deep_sleep_hold_en();
+  //gpio_hold_en(PWR_PIN);
+  //gpio_deep_sleep_hold_en();
+
+  if (connectionType == "LTE") {
+    modem.poweroff();
+  }
+  
 }
 
 void modemRestart(){
   modemPowerOff();
   delay(1000);
   modemPowerOn();
+}
+
+/* ====================== CALLBACK ======================== */
+void callback(char *topic, byte *payload, unsigned int length) {
+  Serial.print("llegada de mensaje tpic ");
+  Serial.println(topic);
+
+  if(String(topic) == String(topicSubscribe) + "/" + macA()){
+    String msg_in = "";
+    for (int i = 0; i < length; i++)
+    {
+      msg_in += String((char)payload[i]);
+    }
+    Serial.println("llegada de mensaje seccion DEVICE ");
+    Serial.println(msg_in);
+    StaticJsonDocument<80> docIn;
+    DeserializationError error = deserializeJson(docIn, msg_in);
+    if (error) {
+      return;
+    }
+
+    boolean Status = docIn["status"];
+    int Time = docIn["timesleep"];
+    boolean a_TH = docIn["A_TH"];
+    boolean a_WS = docIn["A_WS"];
+    boolean a_RS = docIn["A_RD"];
+    TIME_TO_SLEEP = Time;
+    status = Status;
+
+    A_TH = a_TH;
+    A_WS = a_WS;
+    A_RS = a_RS;
+
+    saveSetting(String(status), "/status.txt");
+    saveSetting(String(Time), "/timesleep.txt");
+    saveSetting(String(A_TH), "/A_TH.txt");
+    saveSetting(String(A_WS), "/A_WS.txt");
+    saveSetting(String(A_RS), "/A_RD.txt");
+
+    sendData();
+  }
+}
+
+/* ====================== RECONNECT ======================== */
+void setupMQTT() {
+  if (connectionType == "WIFI") {
+    wificlient.setServer(broker, mqtt_port);
+    wificlient.setCallback(callback); // Reasignar el callback
+  } else if (connectionType == "LTE") {
+    simclient.setServer(broker, mqtt_port);
+    simclient.setCallback(callback); // Reasignar el callback
+  }
+}
+
+void wifiReconnect(){
+  int count = 0;
+  while (!wificlient.connected()) {
+    String client_id = "esp32-client-";
+    client_id += String(macA());
+    if (wificlient.connect(client_id.c_str())) {
+      String topiSub = String(topicSubscribe) + "/" + macA();
+      wificlient.subscribe(topiSub.c_str());
+      Serial.println(topiSub);
+      wificlient.setCallback(callback);
+    } else {
+      Serial.print("failed with state ");
+      Serial.print(wificlient.state());
+      if (count == 5)
+      {
+        ESP.restart();
+      }
+      delay(5000);
+    }
+    count++;
+  }
+}
+
+void simReconnect(){
+  int count = 0;
+  while (!simclient.connected()) {
+    String client_id = "esp32-client-";
+    client_id += String(macA());
+    //Serial.printf("The client %s connects to the public MQTT broker\n", client_id.c_str());
+    if (simclient.connect(client_id.c_str())) {
+      String topiSub = String(topicSubscribe) + "/" + macA();
+      simclient.subscribe(topiSub.c_str());
+      Serial.println(topiSub);
+      simclient.setCallback(callback);
+    } else {
+      Serial.print("failed with state ");
+      Serial.print(simclient.state());
+      if (count == 3)
+      {
+        ESP.restart();
+      }
+      delay(5000);
+    }
+    count++;
+  }
+}
+
+bool checkMQTT() {
+  if (connectionType == "WIFI") {
+    return wificlient.connected();
+  } else if (connectionType == "LTE") {
+    return simclient.connected();
+  }
+  return false;
+}
+
+void getConfig() {
+  StaticJsonDocument<50> docInit;
+  docInit["type"] = "weatherStationSetting";
+  docInit["function"] = "setting";
+  docInit["mac"] = macA();
+
+  String payloadInit = "";
+  serializeJson(docInit, payloadInit);
+
+  Serial.println(payloadInit);
+  String topiSub = String(topicSubscribe) + "/" + macA();
+
+  if (connectionType == "WIFI") {
+    wifiReconnect();
+    
+    if (wificlient.subscribe(topiSub.c_str())) {
+      Serial.println("Suscripción MQTT exitosa");
+    } else {
+      Serial.println("Fallo en suscripción MQTT");
+    }
+    wificlient.publish(topicPublish, payloadInit.c_str());
+
+  } else if (connectionType == "LTE") {
+    simReconnect();
+    if (simclient.subscribe(topiSub.c_str())) {
+      Serial.println("Suscripción MQTT exitosa");
+    } else {
+      Serial.println("Fallo en suscripción MQTT");
+    }
+    simclient.publish(topicPublish, payloadInit.c_str());
+  }
 }
 
 /* ============================== SETUP GRPS ============================== */
@@ -803,28 +805,32 @@ bool setup_grps()
   else
   {
     Serial.println("grps ok"); // sim  grps ok
+    simclient.setServer(broker, mqtt_port);
+    simclient.setCallback(callback);
     return true;
   }
 }
 
-void setup_wifi(){
-    //Connect and send initial data to get the configuration
-    RUNssid = readFile(SPIFFS, "/ssidString.txt");     // original ssid
-    RUNpass = readFile(SPIFFS, "/passString.txt");  // original password
+/* ============================== SETUP WIFI ============================== */
+void setup_wifi() {
+  //Connect and send initial data to get the configuration
+  RUNssid = readFile(SPIFFS, "/ssidString.txt");  // original ssid
+  RUNpass = readFile(SPIFFS, "/passString.txt");  // original password
 
-    int n = 0;
-    WiFi.begin(RUNssid, RUNpass);
-    while (WiFi.status() != WL_CONNECTED) {
-      delay(2000);
-      Serial.println("Connecting to WiFi..");
-      if(n >= 5){
-        ESP.restart();
-      }
-      n++;
+  int n = 0;
+  WiFi.begin(RUNssid, RUNpass);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(2000);
+    Serial.println("Connecting to WiFi..");
+    if (n >= 5) {
+      ESP.restart();
     }
+    n++;
+  }
 
-    Serial.println("Connected to wifi");
-    //printWifiStatus();
+  Serial.println("Connected to wifi");
+  wificlient.setServer(broker, mqtt_port);
+  wificlient.setCallback(callback);
 }
 
 /* ========================= WAKE UP REASON ========================= */
@@ -866,14 +872,82 @@ void wakeup_reason(){
       sleep_enter_time = now;
 
       Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason);
-      //rtc_gpio_init(RUN);
-      //rtc_gpio_set_direction(RUN, RTC_GPIO_MODE_OUTPUT_ONLY);
-      //rtc_gpio_hold_dis(RUN);
-      //rtc_gpio_set_level(RUN, LOW);
-      //rtc_gpio_hold_en(RUN);
+
       init_running();
       break;
   }
+}
+
+void sendData() {
+
+  JsonDocument docOut;
+
+  if (status) {
+    docOut["type"] = "weatherStationData";
+    if (A_TH) {
+      dht.begin();
+      float h = dht.readHumidity();
+      float t = dht.readTemperature();
+
+      int cont = 0;
+      while (isnan(t) || isnan(h) || (h == 1.00 && t == 1.00)) {
+        dht.begin();
+        Serial.println("Failed to read from DHT");
+        h = dht.readHumidity();
+        t = dht.readTemperature();
+
+        if (cont >= 10) {
+          break;
+        }
+        cont++;
+        delay(2000);
+      }
+
+      docOut["H"] = String(h, 2);
+      docOut["T"] = String(t, 2);
+    }
+
+    if (A_WS) {
+      docOut["WV"] = WindVelocity();
+      docOut["WD"] = WindDirection();
+      docOut["RA"] = readFile(SPIFFS, "/ssidRainCounter.txt").toInt();
+    }
+
+    if (A_RS) {
+
+
+      int rad = radRS485();
+      int counter = 0;
+      while (rad < 0) {
+        rad = radRS485();
+        delay(1000);
+        if (counter >= 5) {
+          break;
+        }
+        counter++;
+      }
+      docOut["RS"] = rad;
+    }
+
+    docOut["mac"] = macA();
+    docOut["vB"] = vBat();
+
+    String jsonString;
+    serializeJson(docOut, jsonString);
+
+    Serial.println(jsonString);
+
+    if (connectionType == "WIFI") {
+      wifiReconnect();
+      wificlient.publish(topicPublish, jsonString.c_str());
+    } else if (connectionType == "LTE") {
+      simReconnect();
+      simclient.publish(topicPublish, jsonString.c_str());
+    }
+  }
+
+  //delay(6000);
+  //deepSleepSystem();
 }
 
 /* ====================== RUNNING ======================== */
@@ -887,7 +961,7 @@ void init_running() {
   } else {
     Serial.println("====> running mode");
 
-    String connectionType = readFile(SPIFFS, "/connType.txt");
+    connectionType = readFile(SPIFFS, "/connType.txt");
 
     if (connectionType == "") {
       connectionType = "WIFI";
@@ -896,26 +970,25 @@ void init_running() {
 
     if (connectionType == "WIFI") {
       Serial.println("wifi mode ------>");
-
       modemPowerOff();
       setup_wifi();
+      delay(1000); // Esperar para estabilizar conexión
+      setupMQTT(); // Configurar MQTT
+      delay(1000);
+      getConfig();
     } else if (connectionType == "LTE") {
       Serial.println("lte mode ------>");
       setup_grps();
+      delay(1000); // Esperar para estabilizar conexión
+      setupMQTT(); // Configurar MQTT
+      delay(1000);
+      getConfig();
     }
 
-    Serial.println("start GET ------>");
-
-    getHttp();
-
-    getcsrfHttp();
-
-    Serial.println("start post------>");
-    postHttp();
 
     delay(500);
 
-    deepSleepSystem();
+    //deepSleepSystem();
 
     /*Serial.print("sleep for min: ");
     Serial.println(TIME_TO_SLEEP);
@@ -932,11 +1005,22 @@ void setup() {
   Serial.begin(115200);
   Serial2.begin(BAUD_RATE, SERIAL_MODE, RX_PIN, TX_PIN);
   dht.begin();
+  analogReadResolution(12);
+
   pinMode(DHTPIN, INPUT_PULLUP);
-  pinMode(LED,OUTPUT);
-  digitalWrite(LED,HIGH);
-  rtc_gpio_pullup_en(RAINCOUNT);          // wake up by rain counter
-  esp_sleep_enable_ext1_wakeup(0x4000,ESP_EXT1_WAKEUP_ALL_LOW); // Pin 14 to rain counter
+  pinMode(LED_PIN,OUTPUT);
+  digitalWrite(LED_PIN,LOW);
+
+  pinMode(PINRS485,OUTPUT);
+  digitalWrite(PINRS485,LOW);
+
+  //while(true){
+  //  Serial.println(WindDirection());
+  //  delay(1000);
+  //}
+  
+  //rtc_gpio_pullup_en(RAINCOUNT);          // wake up by rain counter
+  esp_sleep_enable_ext1_wakeup(0x400000000,ESP_EXT1_WAKEUP_ALL_LOW); // Pin 34 to rain counter
   
   // INIT SPIFFS MODULE
   if (!SPIFFS.begin(true)) {
@@ -949,13 +1033,37 @@ void setup() {
 }
 
 void loop() {
+  static unsigned long lastCheck = 0;
 
-  if((millis() - previousTime) > 40000){
+  if (!checkMQTT()) {
+    if (millis() - lastCheck > 5000) {
+      if (connectionType == "WIFI") wifiReconnect();
+      else if (connectionType == "LTE") simReconnect();
+      lastCheck = millis();
+    }
+  }
+
+  if (connectionType == "WIFI") {
+    if (!wificlient.connected()) {
+      wifiReconnect();
+    }
+    wificlient.loop();
+    
+    delay(50);
+  } else if (connectionType == "LTE") {
+    if (!simclient.connected()) {
+      simReconnect();
+    }
+    simclient.loop();
+    
+    delay(50);
+  }
+
+  if ((millis() - previousTime) > 90000) {
     Serial.println(millis() - previousTime);
     Serial.println("sleep for overtime");
-    deepSleepSystem(); // poweroff
+    deepSleepSystem();  // poweroff
   }
-  
 }
 
 
