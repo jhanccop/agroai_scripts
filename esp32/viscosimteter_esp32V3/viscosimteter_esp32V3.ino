@@ -8,12 +8,11 @@ WebServer server(80);
 
 /* ================== HX711 ======================= */
 #include "HX711.h"
-#define calibration_factor 100.0  //This value is obtained using the SparkFun_HX711_Calibration sketch
+#define calibration_factor 10.0  //This value is obtained using the SparkFun_HX711_Calibration sketch
 #define LOADCELL_DOUT_PIN 4
 #define LOADCELL_SCK_PIN 5
 HX711 scale;
 
-#define SENSOR_PIN 34
 #define SERVO_PIN 13
 #define selectOnOff 19    // selectOnOff
 #define selectHighLow 18  // selectHighLow
@@ -24,7 +23,7 @@ bool isContinuous = false;
 unsigned long startTime = 0;
 unsigned long lastSampleTime = 0;
 const int sampleInterval = 1000;    //1000
-const int monitorDuration = 30000;  // 50000
+const int monitorDuration = 45000;  // 50000
 int measurementCount = 0;
 boolean RPMCHanged = true;
 
@@ -43,13 +42,13 @@ float currentValue = 0;
 float lastValue = 0;
 
 float readSensor() {
-  //int rawValue = analogRead(SENSOR_PIN);
   setActuatorsForRPM(rpmValues[dataCount]);
   if (scale.is_ready()) {
-    int rawLoad = scale.get_units(10);  //scale.read_average(5);
+    int rawLoad = scale.get_units(20);  //scale.read_average(5);
     //Serial.println(rawLoad);
-    //return map(rawLoad, 0, 4095, 0, 50);
-    return rawLoad;
+    //float result =  0.674 * rawLoad * 0.1 + 1.18;
+    float result =  0.682 * rawLoad * 0.1 + 1.18;
+    return result;
   }
 }
 
@@ -58,17 +57,17 @@ void posServo(int pos) {
   switch (pos) {
     case 0:
       {
-        myServo.write(105);
+        myServo.write(65); // 105
         break;
       }
     case 1:
       {
-        myServo.write(85);
+        myServo.write(40);// 80
         break;
       }
     case 2:
       {
-        myServo.write(55);
+        myServo.write(25);// 55
         break;
       }
     default:
@@ -76,34 +75,35 @@ void posServo(int pos) {
   }
 }
 
-
 void setActuatorsForRPM(int rpm) {
   if (RPMCHanged) {
     RPMCHanged = false;
     digitalWrite(selectOnOff, LOW);
     if (rpm == 600) {
+      //scale.tare();
+      //delay(1000);
       digitalWrite(selectHighLow, LOW);
-      delay(1000);
+      delay(500);
       posServo(0);
     } else if (rpm == 6) {
       digitalWrite(selectHighLow, LOW);
-      delay(1000);
+      delay(500);
       posServo(1);
     } else if (rpm == 200) {
       digitalWrite(selectHighLow, LOW);
-      delay(1000);
+      delay(500);
       posServo(2);
     } else if (rpm == 300) {
       digitalWrite(selectHighLow, HIGH);
-      delay(1000);
+      delay(500);
       posServo(0);
     } else if (rpm == 3) {
       digitalWrite(selectHighLow, HIGH);
-      delay(1000);
+      delay(500);
       posServo(1);
     } else if (rpm == 100) {
       digitalWrite(selectHighLow, HIGH);
-      delay(1000);
+      delay(500);
       posServo(2);
     }
   }
@@ -130,7 +130,9 @@ void resetMeasurements() {
   measurementCount = 0;
   isMonitoring = false;
   isContinuous = false;
-  digitalWrite(selectOnOff, HIGH);
+  //digitalWrite(selectOnOff, HIGH);
+  //delay(1000);
+  scale.tare();
 }
 
 void handleRoot() {
@@ -141,21 +143,21 @@ void handleRoot() {
   html += "* {box-sizing: border-box;}\n";
   html += "html, body {height: 100%; margin: 0; padding: 0; font-family: Arial, sans-serif; background: #121212; color: #e0e0e0;}\n";
   html += ".container {height: 100%; width: 100%; padding: 20px; overflow-y: auto; display: flex; flex-wrap: wrap;}\n";
-  html += ".column {flex: 1; padding: 10px; min-width: 300px;}\n";
+  html += ".column {flex: 1; padding: 12px; min-width: 300px;}\n";
   html += "h1, h2 {color: #e0e0e0;}\n";
   html += "h1 {text-align: center; margin-top: 0; width: 100%;}\n";
   html += ".card {background: #1e1e1e; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.3);}\n";
   html += "table {width: 100%; border-collapse: collapse; margin-bottom: 20px;}\n";
   html += "table, th, td {border: 1px solid #333;}\n";
-  html += "th, td {padding: 10px; text-align: center;}\n";
+  html += "th, td {padding: 12px; text-align: center;}\n";
   html += "th {background: #333; color: #e0e0e0;}\n";
   html += "canvas {width: 100%; height: 300px; margin-bottom: 20px; background: #232323;}\n";
   html += "button {background: #4CAF50; border: none; color: white; padding: 12px 24px; text-align: center; font-size: 16px; margin: 10px 5px; cursor: pointer; border-radius: 5px;}\n";
   html += "button:hover {background: #45a049;}\n";
   html += "button:disabled {background: #555; cursor: not-allowed;}\n";
-  html += ".status {text-align: center; margin: 10px 0; font-weight: bold; color: #4CAF50;}\n";
+  html += ".status {text-align: center; margin: 12px 0; font-weight: bold; color: #4CAF50;}\n";
   html += ".real-time-value {font-size: 20px; text-align: center; margin: 20px 0; color: #4CAF50;}\n";
-  html += ".measurement-counter {font-size: 18px; text-align: center; margin: 10px 0; color: #e0e0e0;}\n";
+  html += ".measurement-counter {font-size: 18px; text-align: center; margin: 12px 0; color: #e0e0e0;}\n";
   html += ".progress-bar {width: 100%; background-color: #333; border-radius: 5px; margin-bottom: 20px;}\n";
   html += ".progress {height: 20px; background-color: #4CAF50; border-radius: 5px; width: 0%;}\n";
   html += "#stopBtn {background: #f44336;}\n";
@@ -164,7 +166,7 @@ void handleRoot() {
   html += "#resetBtn:hover {background: #fb8c00;}\n";
   html += "#continuousBtn {background: #2196F3;}\n";
   html += "#continuousBtn:hover {background: #1976D2;}\n";
-  html += ".info-box {font-size: 18px; text-align: center; margin: 10px 0; color: #2196F3;}\n";
+  html += ".info-box {font-size: 18px; text-align: center; margin: 12px 0; color: #2196F3;}\n";
   html += ".buttons-container {display: flex; flex-wrap: wrap; justify-content: center;}\n";
   html += "</style>\n";
   html += "</head><body>\n";
@@ -210,6 +212,8 @@ void handleRoot() {
   // Calcular diferencia entre 600 y 300
   float diff600_300 = 0;
   float diff100_200 = 0;
+  float val_300 = 0;
+  float plasVisc = 0;
   float media6 = 0;
 
   for (int i = 0; i < dataCount; i++) {
@@ -220,6 +224,9 @@ void handleRoot() {
           corteY = dataHistory[i].value - pendiente * 600;
           puntosExisten = true;
           diff600_300 = abs(dataHistory[i].value - dataHistory[j].value);
+
+          val_300 = dataHistory[j].value;
+          plasVisc = pendiente * 479 * 1.067 / 1.703;
           // Buscar valores para 100 y 200
           for (int k = 0; k < dataCount; k++) {
             if (rpmValues[k] == 100) {
@@ -247,12 +254,13 @@ void handleRoot() {
   }
 
   if (puntosExisten) {
-    html += "<strong>Pendiente de la recta entre 600 y 300 RPM:</strong> " + String(pendiente, 5) + "<br>";
-    html += "<strong>Point of intersection with the Y axis:</strong> " + String(corteY, 2) + "<br>";
-    html += "<strong>μp = θ(600) -  θ(300): </strong> " + String(diff600_300, 2) + "<br>";
-    html += "<strong>Diferencia entre 100 y 200 RPM:</strong> " + String(diff100_200, 2) + "<br>";
-    html += "<strong>Media a 6 por 2654:</strong> " + String(media6, 2) + "<br>";
-    //html += "<strong>Ecuación de la recta:</strong> y = " + String(pendiente, 5) + "x + " + String(corteY, 2);
+    html += "<table id='dataTable' border='1' cellspacing='0' cellpadding='5'><thead><tr><th>Parameter</th><th>Value</th></tr></thead><tbody>\n";
+    html += "<tr><td>μp = θ(600) -  θ(300)</td><td>" + String(diff600_300, 2) + " cp</td></tr>\n";
+    html += "<tr><td>γp = θ(300) - μp</td><td>" + String(val_300 - diff600_300, 2) + "</td></tr>\n";
+    html += "<tr><td>γp(graph)</td><td>" + String(corteY, 2) + "</td></tr>\n";
+    html += "<tr><td>Plastic viscosity (m)</td><td>" + String(plasVisc, 4) + " </td></tr>\n";
+    html += "</tbody></table>\n";
+
   } else {
     html += "The 600 RPM and 300 RPM points are needed to calculate results.";
   }
@@ -317,7 +325,7 @@ void handleRoot() {
   html += "  ctx.stroke();\n";
 
   html += "  ctx.fillStyle = '#e0e0e0';\n";
-  html += "  ctx.font = '10px Arial';\n";
+  html += "  ctx.font = '14px Arial';\n";
   html += "  ctx.textAlign = 'right';\n";
   html += "  ctx.fillText('0', 25, height - 30);\n";
   html += "  ctx.fillText('50', 25, height - 30 - (height - 40) / 2);\n";
@@ -370,6 +378,59 @@ void handleRoot() {
   html += "  ctx.lineTo(width - 10, height - 30);\n";
   html += "  ctx.stroke();\n";
 
+  html += "  // Dibujar la línea suavizada que conecta todos los puntos\n";
+  html += "  if (data.length > 1) {\n";
+  html += "    // Ordenar datos por RPM para la curva suavizada\n";
+  html += "    const sortedData = [...data].sort((a, b) => a.rpm - b.rpm);\n";
+  html += "    \n";
+  html += "    // Curva suavizada utilizando interpolación\n";
+  html += "    ctx.beginPath();\n";
+  html += "    ctx.strokeStyle = 'rgba(173, 216, 230, 0.7)';\n"; // Azul claro semi-transparente
+  html += "    ctx.lineWidth = 2;\n";
+  html += "    \n";
+  html += "    // Generar puntos intermedios para suavizar la curva\n";
+  html += "    const curvePoints = [];\n";
+  html += "    \n";
+  html += "    // Crear más puntos para una curva más suave\n";
+  html += "    for (let i = 0; i < sortedData.length; i++) {\n";
+  html += "      const x = 30 + ((sortedData[i].rpm - minRPM) / (maxRPM - minRPM)) * (width - 40);\n";
+  html += "      const y = height - 30 - ((sortedData[i].value - minVal) / (maxVal - minVal)) * (height - 40);\n";
+  html += "      curvePoints.push({x, y});\n";
+  html += "    }\n";
+  html += "    \n";
+  html += "    // Dibujar la curva con bezierCurveTo para suavizarla\n";
+  html += "    ctx.moveTo(curvePoints[0].x, curvePoints[0].y);\n";
+  html += "    \n";
+  html += "    // Generar puntos adicionales para la interpolación\n";
+  html += "    const interpolatedPoints = [];\n";
+  html += "    for (let rpm = minRPM; rpm <= maxRPM; rpm += (maxRPM - minRPM) / 100) {\n";
+  html += "      // Encontrar los dos puntos más cercanos para la interpolación\n";
+  html += "      let interpolatedValue = null;\n";
+  html += "      \n";
+  html += "      for (let i = 0; i < sortedData.length - 1; i++) {\n";
+  html += "        if (rpm >= sortedData[i].rpm && rpm <= sortedData[i+1].rpm) {\n";
+  html += "          const ratio = (rpm - sortedData[i].rpm) / (sortedData[i+1].rpm - sortedData[i].rpm);\n";
+  html += "          interpolatedValue = sortedData[i].value + ratio * (sortedData[i+1].value - sortedData[i].value);\n";
+  html += "          \n";
+  html += "          const x = 30 + ((rpm - minRPM) / (maxRPM - minRPM)) * (width - 40);\n";
+  html += "          const y = height - 30 - ((interpolatedValue - minVal) / (maxVal - minVal)) * (height - 40);\n";
+  html += "          interpolatedPoints.push({x, y});\n";
+  html += "          break;\n";
+  html += "        }\n";
+  html += "      }\n";
+  html += "    }\n";
+  html += "    \n";
+  html += "    // Dibujar los puntos interpolados\n";
+  html += "    if (interpolatedPoints.length > 0) {\n";
+  html += "      ctx.moveTo(interpolatedPoints[0].x, interpolatedPoints[0].y);\n";
+  html += "      for (let i = 1; i < interpolatedPoints.length; i++) {\n";
+  html += "        ctx.lineTo(interpolatedPoints[i].x, interpolatedPoints[i].y);\n";
+  html += "      }\n";
+  html += "      ctx.stroke();\n";
+  html += "    }\n";
+  html += "  }\n";
+
+  html += "  // Dibujar los puntos de datos después de la línea para que sean visibles\n";
   html += "  for (let i = 0; i < data.length; i++) {\n";
   html += "    const x = 30 + ((data[i].rpm - minRPM) / (maxRPM - minRPM)) * (width - 40);\n";
   html += "    const y = height - 30 - ((data[i].value - minVal) / (maxVal - minVal)) * (height - 40);\n";
@@ -383,7 +444,7 @@ void handleRoot() {
   html += "    ctx.stroke();\n";
 
   html += "    ctx.fillStyle = '#e0e0e0';\n";
-  html += "    ctx.font = '10px Arial';\n";
+  html += "    ctx.font = '14px Arial';\n";
   html += "    ctx.textAlign = 'center';\n";
   html += "    ctx.fillText(data[i].rpm + ' RPM', x, y - 10);\n";
   html += "    ctx.fillText(data[i].value.toFixed(1), x, y + 20);\n";
@@ -436,7 +497,7 @@ void handleRoot() {
   html += "  ctx.translate(15, height / 2);\n";
   html += "  ctx.rotate(-Math.PI / 2);\n";
   html += "  ctx.textAlign = 'center';\n";
-  html += "  ctx.fillText('Valor', 0, 0);\n";
+  html += "  ctx.fillText('lb/100ft²', 0, 0);\n";
   html += "  ctx.restore();\n";
   html += "}\n";
 
@@ -579,8 +640,14 @@ void handleContinuous() {
     startTime = millis();
     lastSampleTime = startTime;
     lastValue = 0;
+    digitalWrite(selectOnOff, HIGH);
+    delay(2000);
+    //scale.tare();
+    delay(1000);
+
     digitalWrite(selectOnOff, LOW);
-    scale.tare();
+    
+    //Serial.println(scale.get_units(10));
     server.send(200, "text/plain", "OK");
   } else {
     server.send(400, "text/plain", "No se puede iniciar la medición continua");
@@ -588,6 +655,7 @@ void handleContinuous() {
 }
 
 void handleStop() {
+  digitalWrite(selectOnOff, HIGH);
   if (isMonitoring) {
     if (isContinuous || (millis() - startTime) < monitorDuration) {
       addDataPoint(currentValue);
@@ -605,6 +673,8 @@ void handleStop() {
 void handleReset() {
   resetMeasurements();
   digitalWrite(selectOnOff, HIGH);
+  //delay(1000);
+  scale.tare(); 
   server.send(200, "text/plain", "OK");
 }
 
@@ -643,7 +713,7 @@ void handleGetValue() {
         isMonitoring = false;
         isContinuous = false;
 
-        //digitalWrite(selectOnOff, HIGH);
+        digitalWrite(selectOnOff, HIGH);
       }
     }
   } else {
@@ -688,9 +758,6 @@ void setup() {
   scale.set_scale(calibration_factor);
 
   scale.tare();
-
-  // Configurar el pin del sensor
-  pinMode(SENSOR_PIN, INPUT);
 
   // Inicializar el AP
   Serial.println("Configurando Access Point...");
