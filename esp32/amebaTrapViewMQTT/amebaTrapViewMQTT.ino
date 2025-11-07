@@ -1,4 +1,4 @@
-/*AMEBA PRODUCTION*/
+/*AMEBA PRODUCTION JUN 13 2025*/
 #define ARDUINOJSON_STRING_LENGTH_SIZE 4
 
 #include "PowerMode.h"
@@ -26,7 +26,7 @@ char passwordAP[]  = "control123";          // Contraseña del AP
 
 const char* hostAP = "192.168.4.1";            // IP fija del AP del receptor
 const int portAP = 80;                          // Puerto del servidor
-String txId = "AMB1"; 
+String txId = "AMB2"; 
 bool currentRelayState = false;
 
 /* ======== SETUP AP CONNECT ======== */
@@ -173,7 +173,7 @@ void callback(char *topic, byte *payload, unsigned int length) {
     boolean a_TH = docIn["A_TH"];
     boolean RunningNN = docIn["runningNN"];
     boolean Status = docIn["status"];
-    int sleepTime = docIn["SleepTime"];
+    int sleepTime = docIn["timesleep"];
     const char* Resolution = docIn["Resolution"];
 
     DeviceName = String(deviceName);
@@ -229,7 +229,7 @@ void getConfig() {
   
 }
 
-void shutdown(){
+void shutdown(uint32_t SleepTime){
   uint32_t ALARM_DAY = 0;
   uint32_t ALARM_HOUR = 0;
   uint32_t ALARM_MIN = 0;
@@ -513,7 +513,7 @@ void sendData() {
 
   digitalWrite(LED_G, LOW);
 
-  shutdown();
+  shutdown(SleepTime);
 }
 
 /* =========================== WIFI STATUS =============================*/
