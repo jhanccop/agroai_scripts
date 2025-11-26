@@ -713,7 +713,7 @@ void mainTask() {
   uint16_t blLoad = 0;
   float blAcc = 0.0;
 
-  const float ALPHA_L = 0.05;
+  const float ALPHA_L = 0.08;
   const float ALPHA_A = 0.08;
 
   oledShow("Acquiring", "Calculating", "baseline...");
@@ -752,7 +752,7 @@ void mainTask() {
     rAccel.push(fAcc * 1000.0);
 
     if (i % 20 == 0) {
-      oledShow("Acquiring", String(i) + "/" + String(nData),"L: " + String(fLoad) + " A: " + String(fAcc, 2));
+      oledShow("Acquiring", String(i) + "/" + String(nData),"L: " + String(fLoad) + "     A: " + String(fAcc, 2));
     }
     delay(15);
   }
@@ -772,7 +772,7 @@ void mainTask() {
   float minAccel = rAccel.minimum(&minIdx);
   float range = maxAccel - minAccel;
 
-  Serial.println(String(range) + " ** "+ String(accelStdDev));
+  //Serial.println(String(range) + " ** "+ String(accelStdDev));
 
   if (range <= 100 || accelStdDev < 60) {
     status = 0;
@@ -906,7 +906,7 @@ void mainTask() {
     }
   }
 
-  Serial.println("PRT20 RAW LOAD:");
+  Serial.println("20 RAW LOAD:");
   float step = 50 / 19.0;
   for (uint16_t i = 0; i < 20; i++) {
     uint16_t idx = (i < 19) ? (i * step) : 49;
@@ -1458,6 +1458,7 @@ void handleReset() {
   ESP.restart();
 }
 
+/* ========================== CONFIG MODE WIFI AP ========================== */
 void testTask() {
   oledShow("Test Mode", "Starting AP", apSSID);
   WiFi.softAP(apSSID, apPassword);
@@ -1539,6 +1540,14 @@ void setup() {
   digitalWrite(Vext, LOW);
   delay(100);
 
+  if (!SPIFFS.begin(true)) {
+    Serial.println("error mccr");
+  } else {
+    loadSleepCycleOnce();
+    loadAllConfigurations();
+  }
+  delay(1000);
+
   ledsInit();
   oledInit();
   oledShow("Well Analyzer", "Initializing...", "Sensor: " + String(sensorType == "1" ? "HT" : "PRT"),"", "v2.1 Enhanced");
@@ -1548,15 +1557,6 @@ void setup() {
   scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
   pinMode(PIN_CONFIG, INPUT);
   pinMode(PIN_TX_MODE, INPUT);
-
-  if (!SPIFFS.begin(true)) {
-    ledBlink('R', 3);
-  } else {
-    loadSleepCycleOnce();
-    loadAllConfigurations();
-    ledBlink('G', 1);
-  }
-  delay(1000);
 
   if(optimizerEnabled) display.displayOff();
 
@@ -1577,7 +1577,7 @@ void setup() {
     oledShow("Sensors", "MPU6050 OK!");
     ledBlink('G', 1);
   }
-  delay(1000);
+  delay(500);
 
   if (!digitalRead(PIN_CONFIG)) {
     oledShow("Mode", "CONFIGURATION", "", "Starting...");
@@ -1588,7 +1588,8 @@ void setup() {
   oledShow("Mode", "OPERATION", "", "Starting...");
   mainTask();
 
-  digitalWrite(Vext, HIGH); 
+  digitalWrite(Vext, HIGH);
+  delay(100);
 
   Mcu.begin(HELTEC_BOARD, SLOW_CLK_TPYE);
   deviceState = DEVICE_STATE_INIT;
